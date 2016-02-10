@@ -65,23 +65,25 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         DEBUG_SERIAL = int(stn_dict.get('debug_serial', DEBUG_SERIAL))
 
         loginf('using serial port %s' % self.port)
-        self.station = Meteostick(self.port)
-        self.station.open()
+        loginf('observation map is %s' % self.obs_map)
+
+        self.stick = Meteostick(self.port)
+        self.stick.open()
 
     def closePort(self):
-        if self.station is not None:
-            self.station.close()
-            self.station = None
+        if self.stick is not None:
+            self.stick.close()
+            self.stick = None
 
     @property
     def hardware_name(self):
         return 'Meteostick'
 
     def genLoopPackets(self):
-        self.station.set_logger_mode()
+        self.stick.set_logger_mode()
         while True:
-            readings = self.station.get_readings_with_retry(self.max_tries,
-                                                            self.retry_wait)
+            readings = self.stick.get_readings_with_retry(self.max_tries,
+                                                          self.retry_wait)
             data = Meteostick.parse_readings(readings)
             if data:
                 packet = self._data_to_packet(data)
@@ -131,7 +133,7 @@ class Meteostick(object):
     def get_readings(self):
         buf = self.serial_port.readline()
         if DEBUG_SERIAL:
-            logdbg("station said: %s" %
+            logdbg("stick said: %s" %
                    ' '.join(["%0.2X" % ord(c) for c in buf]))
         buf = buf.strip()
         return buf
@@ -191,7 +193,6 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
     def default_stanza(self):
         return """
 [Meteostick]
-    # This section is for the Meteostick
 
     # Serial port such as /dev/ttyS0, /dev/ttyUSB0, or /dev/cuaU0
     port = %s
@@ -205,7 +206,7 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
 """ % (MeteostickDriver.DEFAULT_PORT, "\n".join(["        %s = %s" % (x, MeteostickDriver.DEFAULT_MAP[x]) for x in MeteostickDriver.DEFAULT_MAP]))
 
     def prompt_for_settings(self):
-        print "Specify the serial port on which the station is connected, for"
+        print "Specify the serial port on which the stick is connected, for"
         print "example /dev/ttyUSB0 or /dev/ttyS0."
         port = self._prompt('port', MeteostickDriver.DEFAULT_PORT)
         return {'port': port}
@@ -227,7 +228,7 @@ if __name__ == '__main__':
     parser.add_option('--version', dest='version', action='store_true',
                       help='display driver version')
     parser.add_option('--port', dest='port', metavar='PORT',
-                      help='serial port to which the station is connected',
+                      help='serial port to which the stick is connected',
                       default=Meteostick.DEFAULT_PORT)
     (options, args) = parser.parse_args()
 
