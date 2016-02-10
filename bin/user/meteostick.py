@@ -92,7 +92,7 @@ class Meteostick(weewx.drivers.AbstractDevice):
                   'usUnits': weewx.METRICWX}
         for k in self.obs_map:
             packet[self.obs_map[k]] = data[k]
-            if k == 'rain_total':
+            if self.obs_map[k] == 'rain_total':
                 packet[self.obs_map[k]] *= self.rain_per_tip
         if 'rain_total' in packet:
             if self.last_rain is not None:
