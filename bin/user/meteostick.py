@@ -158,7 +158,7 @@ class Station(object):
             data['pressure'] = parts[3] # hPa
             data['rf_ok'] = parts[4]
             data['rf_fail'] = parts[5]
-        elif parts[0] in ['W', 'T', 'R', 'S', 'U', 'L', 'M', 'O', 'P']:
+        elif parts[0] in 'WTRSULMOP':
             data['rf_signal_%s' % parts[1]] = parts[4]
             data['battery_%s' % parts[1]] = 1 if parts[5] == 'L' else 0
             if parts[0] == 'W':
