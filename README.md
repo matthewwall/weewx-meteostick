@@ -2,6 +2,11 @@
 
 Read data from a meteostick via serial connection.
 
+The meteostick must be in 'Computed Values' mode.  Send it the o1 command to
+put it in this mode.  See the Meteostick Manual for instructions.
+
+How to install this driver:
+
 1) download the extension
 
 wget https://github.com/matthewwall/weewx-meteostick/archive/master.zip
