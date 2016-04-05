@@ -9,7 +9,7 @@ def loader():
 class MeteostickInstaller(ExtensionInstaller):
     def __init__(self):
         super(MeteostickInstaller, self).__init__(
-            version="0.1",
+            version="0.6",
             name='meteostick',
             description='Collect data from meteostick via serial port',
             author="Matthew Wall",
@@ -19,6 +19,13 @@ class MeteostickInstaller(ExtensionInstaller):
                     'station_type': ''},
                 'Meteostick': {
                     'driver': 'user.meteostick',
-                    'port': '/dev/ttyUSB0'}},
+                    'port': '/dev/ttyUSB0',
+                    'transceiver_frequency': 'EU',
+                    'rain_bucket_type': '1',
+                    'iss_channel': '1',
+                    'anemometer_channel': '0',
+                    'leaf_soil_channel': '0',
+                    'temp_hum_1_channel': '0',
+                    'temp_hum_2_channel': '0'}},
             files=[('bin/user', ['bin/user/meteostick.py'])]
             )
