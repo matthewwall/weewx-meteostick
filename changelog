@@ -1,3 +1,7 @@
+0.6 23mar2016
+* added parameters for bucket type, transceiver frequency, and channels
+* added support for soil moisture, extra temp, extra humid
+
 0.4 19feb2016
 * added mapping for rf_signal_1 to rxCheckPercent
 
@@ -9,5 +13,3 @@
 
 0.1 10feb2016
 * initial release
-0.6 23Mar2016
-* initial package

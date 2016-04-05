@@ -2,23 +2,25 @@
 
 Read data from a meteostick via serial connection.
 
-The meteostick must be in 'Computed Values' mode.  Send it the o1 command to
-put it in this mode.  See the Meteostick Manual for instructions.
 
-How to install this driver:
+Installation
 
-1) download the extension
+0) Install weewx, select Simulator as the weather station
 
-wget https://github.com/matthewwall/weewx-meteostick/archive/master.zip
+http://weewx.com/docs/usersguide.htm
 
-2) install the extension
+1) Download the driver
+
+wget -O weewx-meteostick.zip https://github.com/matthewwall/weewx-meteostick/archive/master.zip
+
+2) Install the driver
 
 sudo wee_extension --install weewx-meteostick-master.zip
 
-3) configure weewx to use the driver
+3) Configure the driver
 
-sudo wee_config
+sudo wee_config --reconfigure
 
-4) start weewx
+4) Start weewx
 
 sudo /etc/init.d/weewx start
