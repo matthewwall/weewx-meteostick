@@ -1,2 +1,11 @@
+0.4 19feb2016
+* added mapping for rf_signal_1 to rxCheckPercent
+
+0.3 18feb2016
+* no log of field rf_signal_*
+* no log for blank lines
+* lines starting with # will be logged as info message
+* changed format of B
+
 0.1 10feb2016
 * initial release
