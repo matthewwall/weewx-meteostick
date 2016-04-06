@@ -140,7 +140,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
                 if DEBUG_PARSE:
                     logdbg("readings: %s" % readings)
                 data = Meteostick.parse_readings(
-                    readings, self.temp_hum_1_sensor, self.temp_hum_2_sensor)
+                    readings, self.temp_hum_1_channel, self.temp_hum_2_channel)
                 if data:
                     if DEBUG_PARSE:
                         logdbg("data: %s" % data)
