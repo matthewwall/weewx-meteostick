@@ -15,7 +15,7 @@ wget -O weewx-meteostick.zip https://github.com/matthewwall/weewx-meteostick/arc
 
 2) Install the driver
 
-sudo wee_extension --install weewx-meteostick-master.zip
+sudo wee_extension --install weewx-meteostick.zip
 
 3) Configure the driver
 

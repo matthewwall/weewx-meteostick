@@ -118,9 +118,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         loginf('using transmitters %02x' % transmitters)
         loginf('sensor map is: %s' % self.obs_map)
 
-        self.station = Meteostick(port, baudrate, transmitters,
-                                  freq, self.temp_hum_1_channel,
-                                  self.temp_hum_2_channel)
+        self.station = Meteostick(port, baudrate, transmitters, freq)
         self.station.open()
 
     def closePort(self):
@@ -466,6 +464,6 @@ if __name__ == '__main__':
         transmitters += 1 << (int(options.c_th2) - 1)
 
     with Meteostick(options.port, options.baudrate, transmitters,
-                    options.frequency, options.c_th1, options.c_th2) as s:
+                    options.frequency) as s:
         while True:
             print time.time(), s.get_readings()
