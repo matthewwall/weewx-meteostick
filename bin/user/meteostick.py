@@ -1,5 +1,19 @@
 #!/usr/bin/env python
+# Meteostick driver for weewx
+#
 # Copyright 2016 Matthew Wall, Luc Heijst
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE.
+#
+# See http://www.gnu.org/licenses/
+#
+# Thanks to Frank Bandle for testing during the development of this driver.
 
 from __future__ import with_statement
 import serial
@@ -15,6 +29,7 @@ DRIVER_VERSION = '0.7'
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
 DEBUG_PARSE = 0
+
 
 def loader(config_dict, _):
     return MeteostickDriver(**config_dict[DRIVER_NAME])
@@ -44,7 +59,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
     DEFAULT_PORT = '/dev/ttyUSB0'
     DEFAULT_BAUDRATE = 115200
     DEFAULT_FREQUENCY = 'EU'
-    DEFAULT_MAP = {
+    DEFAULT_SENSOR_MAP = {
         'pressure': 'pressure',
         'in_temp': 'inTemp',
         'wind_speed': 'windSpeed',
@@ -94,7 +109,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
             transmitters += 1 << (self.temp_hum_2_channel - 1)
         rain_bucket_type = int(stn_dict.get('rain_bucket_type', 0))
         self.rain_per_tip = 0.254 if rain_bucket_type == 0 else 0.2 # mm
-        self.obs_map = stn_dict.get('map', self.DEFAULT_MAP)
+        self.sensor_map = stn_dict.get('sensor_map', self.DEFAULT_SENSOR_MAP)
         self.max_tries = int(stn_dict.get('max_tries', 10))
         self.retry_wait = int(stn_dict.get('retry_wait', 10))
         self.last_rain_counter = None
@@ -116,7 +131,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         loginf('using temp_hum_2_channel %s' % self.temp_hum_2_channel)
         loginf('using rain_bucket_type %s' % rain_bucket_type)
         loginf('using transmitters %02x' % transmitters)
-        loginf('sensor map is: %s' % self.obs_map)
+        loginf('sensor map is: %s' % self.sensor_map)
 
         self.station = Meteostick(port, baudrate, transmitters, freq)
         self.station.open()
@@ -153,9 +168,9 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         packet = {'dateTime': int(time.time() + 0.5),
                   'usUnits': weewx.METRICWX}
         for k in data:
-            if k in self.obs_map:
-                packet[self.obs_map[k]] = data[k]
-                if self.obs_map[k] == 'rain':
+            if k in self.sensor_map:
+                packet[self.sensor_map[k]] = data[k]
+                if self.sensor_map[k] == 'rain':
                     if self.last_rain_counter is not None:
                         rain_count = packet['rain'] - self.last_rain_counter
                     else:
