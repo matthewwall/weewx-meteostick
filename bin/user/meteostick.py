@@ -300,7 +300,7 @@ class Meteostick(object):
                     loginf("RSUP: not enough parts (%s) in '%s'" %
                            (number_of_parts, raw))
             elif parts[0] in '#':
-                loginf("info: %s" % raw)
+                loginf("%s" % raw)
             else:
                 logerr("unknown sensor identifier '%s' in '%s'" %
                        (parts[0], raw))
