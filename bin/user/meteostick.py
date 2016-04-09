@@ -24,7 +24,7 @@ import weewx
 import weewx.drivers
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.7'
+DRIVER_VERSION = '0.8'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -92,21 +92,14 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         port = stn_dict.get('port', self.DEFAULT_PORT)
         baudrate = stn_dict.get('baudrate', self.DEFAULT_BAUDRATE)
         freq = stn_dict.get('transceiver_frequency', self.DEFAULT_FREQUENCY)
-        transmitters = 0
         iss_channel = int(stn_dict.get('iss_channel', 1))
-        transmitters += 1 << (iss_channel - 1)
         anemometer_channel = int(stn_dict.get('anemometer_channel', 0))
-        if anemometer_channel != 0:
-            transmitters += 1 << (anemometer_channel - 1)
         leaf_soil_channel = int(stn_dict.get('leaf_soil_channel', 0))
-        if leaf_soil_channel != 0:
-            transmitters += 1 << (leaf_soil_channel - 1)
         self.temp_hum_1_channel = int(stn_dict.get('temp_hum_1_channel', 0))
-        if self.temp_hum_1_channel != 0:
-            transmitters += 1 << (self.temp_hum_1_channel - 1)
         self.temp_hum_2_channel = int(stn_dict.get('temp_hum_2_channel', 0))
-        if self.temp_hum_2_channel != 0:
-            transmitters += 1 << (self.temp_hum_2_channel - 1)
+        transmitters = Meteostick.ch_to_xmit(
+            iss_channel, anemometer_channel, leaf_soil_channel,
+            self.temp_hum_1_channel, self.temp_hum_2_channel)
         rain_bucket_type = int(stn_dict.get('rain_bucket_type', 0))
         self.rain_per_tip = 0.254 if rain_bucket_type == 0 else 0.2 # mm
         self.sensor_map = stn_dict.get('sensor_map', self.DEFAULT_SENSOR_MAP)
@@ -237,7 +230,7 @@ class Meteostick(object):
             raise weewx.RetriesExceeded(msg)
 
     @staticmethod
-    def parse_readings(raw, temp_hum_1_channel=0, temp_hum_2_channel=0):
+    def parse_readings(raw, th1_channel=0, th2_channel=0):
         parts = raw.split(' ')
         number_of_parts = len(parts)
         if number_of_parts > 1:
@@ -263,10 +256,10 @@ class Meteostick(object):
                         data['wind_speed'] = float(parts[2]) # m/s
                         data['wind_dir'] = float(parts[3]) # degrees
                     elif parts[0] == 'T':
-                        if temp_hum_1_channel != 0 and int(parts[1]) == temp_hum_1_channel:
+                        if th1_channel != 0 and int(parts[1]) == th1_channel:
                             data['extra_temp_1'] = float(parts[2]) # C
                             data['extra_humid_1'] = float(parts[3]) # %
-                        elif temp_hum_2_channel != 0 and int(parts[1]) == temp_hum_2_channel:
+                        elif th2_channel != 0 and int(parts[1]) == th2_channel:
                             data['extra_temp_2'] = float(parts[2]) # C
                             data['extra_humid_2'] = float(parts[3]) # %
                         else:
@@ -369,6 +362,21 @@ class Meteostick(object):
         # From now on the device will produce lines with received data
         # Ignore data of first line (may not be complete)
 
+    @staticmethod
+    def ch_to_xmit(iss_channel, anemometer_channel, leaf_soil_channel,
+                   temp_hum_1_channel, temp_hum_2_channel):
+        transmitters = 0
+        transmitters += 1 << (iss_channel - 1)
+        if anemometer_channel != 0:
+            transmitters += 1 << (anemometer_channel - 1)
+        if leaf_soil_channel != 0:
+            transmitters += 1 << (leaf_soil_channel - 1)
+        if temp_hum_1_channel != 0:
+            transmitters += 1 << (temp_hum_1_channel - 1)
+        if temp_hum_2_channel != 0:
+            transmitters += 1 << (temp_hum_2_channel - 1)
+        return transmitters
+
 
 class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
     @property
@@ -382,19 +390,19 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
 
     # Radio frequency to use between USB transceiver and console: US or EU
     # US uses 915 MHz, EU uses 868.3 MHz
-    #transceiver_frequency = EU
+    transceiver_frequency = EU
 
     # A channel has value 0-8 where 0 indicates not present
     # The channel of the Vantage Vue, Pro, or Pro2 ISS
-    #iss_channel = 1
+    iss_channel = 1
     # Additional channels apply only to Vantage Pro or Pro2
-    #anemometer_channel = 0
-    #leaf_soil_channel = 0
-    #temp_hum_1_channel = 0
-    #temp_hum_2_channel = 0
+    anemometer_channel = 0
+    leaf_soil_channel = 0
+    temp_hum_1_channel = 0
+    temp_hum_2_channel = 0
 
     # Rain bucket type: 0 is 0.01 inch per tip, 1 is 0.2 mm per tip
-    #rain_bucket_type = 0
+    rain_bucket_type = 0
 
     # The driver to use
     driver = user.meteostick
@@ -467,16 +475,9 @@ if __name__ == '__main__':
         print "meteostick driver version %s" % DRIVER_VERSION
         exit(0)
 
-    transmitters = 0
-    transmitters += 1 << (int(options.c_iss) - 1)
-    if options.c_a != 0:
-        transmitters += 1 << (int(options.c_a) - 1)
-    if options.c_ls != 0:
-        transmitters += 1 << (int(options.c_ls) - 1)
-    if options.c_th1 != 0:
-        transmitters += 1 << (int(options.c_th1) - 1)
-    if options.c_th2 != 0:
-        transmitters += 1 << (int(options.c_th2) - 1)
+    transmitters = Meteostick.ch_to_xmit(
+        int(options.c_iss), int(options.c_a), int(options.c_ls),
+        int(options.c_th1), int(options.c_th2))
 
     with Meteostick(options.port, options.baudrate, transmitters,
                     options.frequency) as s:

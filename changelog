@@ -1,3 +1,7 @@
+0.8 08apr2016
+* minor code refactoring
+* make default config stanza consistent
+
 0.6 23mar2016
 * added parameters for bucket type, transceiver frequency, and channels
 * added support for soil moisture, extra temp, extra humid
