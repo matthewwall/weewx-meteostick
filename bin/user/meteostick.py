@@ -66,10 +66,9 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         'wind_dir': 'windDir',
         'temperature': 'outTemp',
         'humidity': 'outHumidity',
-        'rain_counter': 'rain',
+        'rain_count': 'rain',
         'solar_radiation': 'radiation',
         'uv': 'UV',
-        'battery': 'txBatteryStatus',
         'rf_signal': 'rxCheckPercent',
         'solar_power': 'extraTemp3',
         'soil_temp_1': 'soilTemp1',
@@ -82,10 +81,15 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         'soil_moisture_4': 'soilMoist4',
         'leaf_wetness_1': 'leafWet1',
         'leaf_wetness_2': 'leafWet2',
-        'extra_temp_1': 'extraTemp1',
-        'extra_temp_2': 'extraTemp2',
-        'extra_humid_1': 'extraHumid1',
-        'extra_humid_2': 'extraHumid2'}
+        'temp_1': 'extraTemp1',
+        'temp_2': 'extraTemp2',
+        'humid_1': 'extraHumid1',
+        'humid_2': 'extraHumid2',
+        'bat_iss': 'txBatteryStatus',
+        'bat_anemometer': 'windBatteryStatus',
+        'bat_soil_leaf': 'rainBatteryStatus',
+        'bat_th_1': 'outTempBatteryStatus',
+        'bat_th_2': 'inTempBatteryStatus'}
 
     def __init__(self, **stn_dict):
         loginf('driver version is %s' % DRIVER_VERSION)
@@ -105,7 +109,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         self.sensor_map = stn_dict.get('sensor_map', self.DEFAULT_SENSOR_MAP)
         self.max_tries = int(stn_dict.get('max_tries', 10))
         self.retry_wait = int(stn_dict.get('retry_wait', 10))
-        self.last_rain_counter = None
+        self.last_rain_count = None
 
         global DEBUG_PARSE
         DEBUG_PARSE = int(stn_dict.get('debug_parse', DEBUG_PARSE))
@@ -160,22 +164,24 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
     def _data_to_packet(self, data):
         packet = {'dateTime': int(time.time() + 0.5),
                   'usUnits': weewx.METRICWX}
+        # map sensor observations to database field names
         for k in data:
             if k in self.sensor_map:
                 packet[self.sensor_map[k]] = data[k]
-                if self.sensor_map[k] == 'rain':
-                    if self.last_rain_counter is not None:
-                        rain_count = packet['rain'] - self.last_rain_counter
-                    else:
-                        rain_count = 0
-                    # Take care for the rain counter wrap around from 255 to 0
-                    if rain_count < 0:
-                        rain_count += 256
-                    self.last_rain_counter = packet['rain']
-                    packet['rain'] = rain_count * self.rain_per_tip # mm
-                    if DEBUG_RAIN:
-                        logdbg("last_rain_counter=%s, packet['rain']=%s" %
-                               (self.last_rain_counter, packet['rain']))
+        # convert the rain count to a rain delta measure
+        if 'rain' in packet:
+            if self.last_rain_count is not None:
+                rain_count = packet['rain'] - self.last_rain_count
+            else:
+                rain_count = 0
+            # handle rain counter wrap around from 255 to 0
+            if rain_count < 0:
+                rain_count += 256
+            self.last_rain_count = packet['rain']
+            packet['rain'] = rain_count * self.rain_per_tip # mm
+            if DEBUG_RAIN:
+                logdbg("rain=%s rain_count=%s last_rain_count=%s" %
+                       (packet['rain'], rain_count, self.last_rain_count))
         return packet
 
 
@@ -232,57 +238,57 @@ class Meteostick(object):
     @staticmethod
     def parse_readings(raw, th1_channel=0, th2_channel=0):
         parts = raw.split(' ')
-        number_of_parts = len(parts)
-        if number_of_parts > 1:
+        n = len(parts)
+        if n > 1:
             if DEBUG_PARSE > 2:
-                logdbg("line: '%s'" % raw)
-                logdbg("parts: %s (%s)" % (parts, number_of_parts))
+                logdbg("parts: %s (%s)" % (parts, n))
             data = dict()
             if parts[0] == 'B':
-                if number_of_parts >= 3:
+                if n >= 3:
                     data['in_temp'] = float(parts[1]) # C
                     data['pressure'] = float(parts[2]) # hPa
                 else:
-                    loginf("B: not enough parts (%s) in '%s'" %
-                           (number_of_parts, raw))
-            elif parts[0] in 'WTLMO':
-                if number_of_parts >= 5:
+                    loginf("B: not enough parts (%s) in '%s'" % (n, raw))
+            elif parts[0] in 'WT':
+                if n >= 5:
                     data['rf_signal'] = float(parts[4])
-                    if number_of_parts == 5:
-                        data['battery'] = 0
-                    else:
-                        data['battery'] = 1 if parts[5] == 'L' else 0
                     if parts[0] == 'W':
+                        data['bat_anemometer'] = 1 if n >= 6 and parts[5] == 'L' else 0
                         data['wind_speed'] = float(parts[2]) # m/s
                         data['wind_dir'] = float(parts[3]) # degrees
                     elif parts[0] == 'T':
                         if th1_channel != 0 and int(parts[1]) == th1_channel:
-                            data['extra_temp_1'] = float(parts[2]) # C
-                            data['extra_humid_1'] = float(parts[3]) # %
+                            data['bat_th_1'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                            data['temp_1'] = float(parts[2]) # C
+                            data['humid_1'] = float(parts[3]) # %
                         elif th2_channel != 0 and int(parts[1]) == th2_channel:
-                            data['extra_temp_2'] = float(parts[2]) # C
-                            data['extra_humid_2'] = float(parts[3]) # %
+                            data['bat_th_2'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                            data['temp_2'] = float(parts[2]) # C
+                            data['humid_2'] = float(parts[3]) # %
                         else:
+                            data['bat_iss'] = 1 if n >= 6 and parts[5] == 'L' else 0
                             data['temperature'] = float(parts[2]) # C
                             data['humidity'] = float(parts[3]) # %
-                    elif parts[0] == 'L':
+                else:
+                    loginf("WT: not enough parts (%s) in '%s'" % (n, raw))
+            elif parts[0] in 'LMO':
+                if n >= 5:
+                    data['rf_signal'] = float(parts[4])
+                    data['bat_soil_leaf'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                    if parts[0] == 'L':
                         data['leaf_wetness_%s' % parts[2]] = float(parts[3]) # 0-15
                     elif parts[0] == 'M':
                         data['soil_moisture_%s' % parts[2]] = float(parts[3]) # cbar 0-200
                     elif parts[0] == 'O':
                         data['soil_temp_%s' % parts[2]] = float(parts[3])  # C
                 else:
-                    loginf("WTLMO: not enough parts (%s) in '%s'" %
-                           (number_of_parts, raw))
+                    loginf("LMO: not enough parts (%s) in '%s'" % (n, raw))
             elif parts[0] in 'RSUP':
-                if number_of_parts >= 4:
+                if n >= 4:
                     data['rf_signal'] = float(parts[3])
-                    if number_of_parts == 4:
-                        data['battery'] = 0
-                    else:
-                        data['battery'] = 1 if parts[4] == 'L' else 0
+                    data['bat_iss'] = 1 if n >= 5 and parts[4] == 'L' else 0
                     if parts[0] == 'R':
-                        data['rain_counter'] = float(parts[2])  # 0-255
+                        data['rain_count'] = float(parts[2])  # 0-255
                     elif parts[0] == 'S':
                         data['solar_radiation'] = float(parts[2])  # W/m^2
                     elif parts[0] == 'U':
@@ -290,8 +296,7 @@ class Meteostick(object):
                     elif parts[0] == 'P':
                         data['solar_power'] = float(parts[2])  # 0-100
                 else:
-                    loginf("RSUP: not enough parts (%s) in '%s'" %
-                           (number_of_parts, raw))
+                    loginf("RSUP: not enough parts (%s) in '%s'" % (n, raw))
             elif parts[0] in '#':
                 loginf("%s" % raw)
             else:
@@ -426,9 +431,9 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
         settings['anemometer_channel'] = self._prompt('anemometer_channel', 0)
         print "Specify the channel of the Leaf & Soil station if any (0=none; 1-8)"
         settings['leaf_soil_channel'] = self._prompt('leaf_soil_channel', 0)
-        print "Specify the channel of the first extra Temp/Humidity station if any (0=none; 1-8)"
+        print "Specify the channel of the first Temp/Humidity station if any (0=none; 1-8)"
         settings['temp_hum_1_channel'] = self._prompt('temp_hum_1_channel', 0)
-        print "Specify the channel of the second extra Temp/Humidity station if any (0=none; 1-8)"
+        print "Specify the channel of the second Temp/Humidity station if any (0=none; 1-8)"
         settings['temp_hum_2_channel'] = self._prompt('temp_hum_2_channel', 0)
         return settings
 
