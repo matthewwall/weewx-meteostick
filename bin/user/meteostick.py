@@ -24,7 +24,7 @@ import weewx
 import weewx.drivers
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.8'
+DRIVER_VERSION = '0.9'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -152,7 +152,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
                 if DEBUG_PARSE:
                     logdbg("readings: %s" % readings)
                 data = Meteostick.parse_readings(
-                    readings, self.temp_hum_1_channel, self.temp_hum_2_channel)
+                    readings, self.iss_channel,
+                    self.temp_hum_1_channel, self.temp_hum_2_channel)
                 if data:
                     if DEBUG_PARSE:
                         logdbg("data: %s" % data)
@@ -236,7 +237,7 @@ class Meteostick(object):
             raise weewx.RetriesExceeded(msg)
 
     @staticmethod
-    def parse_readings(raw, th1_channel=0, th2_channel=0):
+    def parse_readings(raw, iss_channel=0, th1_channel=0, th2_channel=0):
         parts = raw.split(' ')
         n = len(parts)
         if n > 1:
@@ -253,7 +254,10 @@ class Meteostick(object):
                 if n >= 5:
                     data['rf_signal'] = float(parts[4])
                     if parts[0] == 'W':
-                        data['bat_anemometer'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                        if iss_channel != 0 and int(parts[1]) == iss_channel:
+                            data['bat_iss'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                        else:
+                            data['bat_anemometer'] = 1 if n >= 6 and parts[5] == 'L' else 0
                         data['wind_speed'] = float(parts[2]) # m/s
                         data['wind_dir'] = float(parts[3]) # degrees
                     elif parts[0] == 'T':
@@ -306,7 +310,7 @@ class Meteostick(object):
 
     def configure(self):
         # in logger mode, station sends records continuously
-        if DEBUG_SERIAL > 1:
+        if DEBUG_SERIAL:
             logdbg("set station to logger mode")
 
         # Send a reset command
@@ -314,16 +318,14 @@ class Meteostick(object):
         self.serial_port.write(command)
         # Wait until we see the ? character
         ready = False
-        response = ""
         while not ready:
             time.sleep(0.1)
             while self.serial_port.inWaiting() > 0:
                 response = self.serial_port.read(1)
                 if response == '?':
                     ready = True
-            response += response
-        if DEBUG_SERIAL > 2:
-            logdbg("command: '%s' response: %s" % (command, response))
+                elif response.find('Meteostick Version') >= 0:
+                    loginf("command: '%s' response: %s" % (command, response))
         # Discard any serial input from the device
         time.sleep(0.2)
         self.serial_port.flushInput()
@@ -333,8 +335,7 @@ class Meteostick(object):
         self.serial_port.write(command)
         time.sleep(0.2)
         response = self.serial_port.read(self.serial_port.inWaiting())
-        if DEBUG_SERIAL > 2:
-            logdbg("command: '%s' response: %s" % (command, response))
+        loginf("command: '%s' response: %s" % (command, response))
         self.serial_port.flushInput()
 
         # Set to filter transmissions from anything other than transmitter 1
@@ -342,8 +343,7 @@ class Meteostick(object):
         self.serial_port.write(command)
         time.sleep(0.2)
         response = self.serial_port.read(self.serial_port.inWaiting())
-        if DEBUG_SERIAL > 2:
-            logdbg("command: '%s' response: %s" % (command, response))
+        loginf("command: '%s' response: %s" % (command, response))
         self.serial_port.flushInput()
 
         # Set device to produce machine readable data
@@ -351,8 +351,7 @@ class Meteostick(object):
         self.serial_port.write(command)
         time.sleep(0.2)
         response = self.serial_port.read(self.serial_port.inWaiting())
-        if DEBUG_SERIAL > 2:
-            logdbg("command: '%s' response: %s" % (command, response))
+        loginf("command: '%s' response: %s" % (command, response))
         self.serial_port.flushInput()
 
         # Set device to use the right frequency
@@ -360,8 +359,7 @@ class Meteostick(object):
         self.serial_port.write(command)
         time.sleep(0.2)
         response = self.serial_port.read(self.serial_port.inWaiting())
-        if DEBUG_SERIAL > 2:
-            logdbg("command: '%s' response: %s" % (command, response))
+        loginf("command: '%s' response: %s" % (command, response))
         self.serial_port.flushInput()
 
         # From now on the device will produce lines with received data

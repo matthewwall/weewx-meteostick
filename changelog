@@ -1,3 +1,6 @@
+0.9 11apr2016
+* always provide details about meteostick state
+
 0.8 09apr2016
 * minor code refactoring
 * make default config stanza consistent
