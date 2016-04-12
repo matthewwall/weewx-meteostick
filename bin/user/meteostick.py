@@ -474,11 +474,11 @@ if __name__ == '__main__':
         print "meteostick driver version %s" % DRIVER_VERSION
         exit(0)
 
-    transmitters = Meteostick.ch_to_xmit(
+    xmitters = Meteostick.ch_to_xmit(
         int(options.c_iss), int(options.c_a), int(options.c_ls),
         int(options.c_th1), int(options.c_th2))
 
-    with Meteostick(options.port, options.baudrate, transmitters,
+    with Meteostick(options.port, options.baudrate, xmitters,
                     options.frequency) as s:
         while True:
             print time.time(), s.get_readings()
