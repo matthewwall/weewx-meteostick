@@ -175,7 +175,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
                 rain_count = packet['rain'] - self.last_rain_count
             else:
                 rain_count = 0
-            # handle rain counter wrap around from 255 to 0
+            # handle rain counter wrap around from 127 to 0
             if rain_count < 0:
                 rain_count += 128
             self.last_rain_count = packet['rain']
@@ -332,9 +332,9 @@ class Meteostick(object):
                     ready = True
                 else:
                     response += c
-        loginf("command: '%s' response: %s" % (command, response.split('\n')[0]))
+        loginf("cmd: '%s': %s" % (command, response.split('\n')[0]))
         if DEBUG_SERIAL > 2:
-            logdbg("full response: %s" % response)
+            logdbg("full response to reset: %s" % response)
         # Discard any serial input from the device
         time.sleep(0.2)
         self.serial_port.flushInput()
@@ -358,7 +358,7 @@ class Meteostick(object):
         self.serial_port.write(command)
         time.sleep(0.2)
         response = self.serial_port.read(self.serial_port.inWaiting())
-        loginf("command: '%s' response: %s" % (cmd, response))
+        loginf("cmd: '%s': %s" % (cmd, response))
         self.serial_port.flushInput()
 
     @staticmethod
