@@ -2,6 +2,7 @@
 * rain counter wraparound is 128 not 256
 * prevent failure when empty sentence from meteostick
 * catch parsing exceptions so that failures will not cause weewx to quit
+* adjust log messages during startup
 
 0.9 11apr2016
 * always provide details about meteostick state
