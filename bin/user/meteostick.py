@@ -24,7 +24,7 @@ import weewx
 import weewx.drivers
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.9'
+DRIVER_VERSION = '0.10'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -96,13 +96,13 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         port = stn_dict.get('port', self.DEFAULT_PORT)
         baudrate = stn_dict.get('baudrate', self.DEFAULT_BAUDRATE)
         freq = stn_dict.get('transceiver_frequency', self.DEFAULT_FREQUENCY)
-        iss_channel = int(stn_dict.get('iss_channel', 1))
+        self.iss_channel = int(stn_dict.get('iss_channel', 1))
         anemometer_channel = int(stn_dict.get('anemometer_channel', 0))
         leaf_soil_channel = int(stn_dict.get('leaf_soil_channel', 0))
         self.temp_hum_1_channel = int(stn_dict.get('temp_hum_1_channel', 0))
         self.temp_hum_2_channel = int(stn_dict.get('temp_hum_2_channel', 0))
         transmitters = Meteostick.ch_to_xmit(
-            iss_channel, anemometer_channel, leaf_soil_channel,
+            self.iss_channel, anemometer_channel, leaf_soil_channel,
             self.temp_hum_1_channel, self.temp_hum_2_channel)
         rain_bucket_type = int(stn_dict.get('rain_bucket_type', 0))
         self.rain_per_tip = 0.254 if rain_bucket_type == 0 else 0.2 # mm
@@ -121,7 +121,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         loginf('using serial port %s' % port)
         loginf('using baudrate %s' % baudrate)
         loginf('using frequency %s' % freq)
-        loginf('using iss_channel %s' % iss_channel)
+        loginf('using iss_channel %s' % self.iss_channel)
         loginf('using anemometer_channel %s' % anemometer_channel)
         loginf('using leaf_soil_channel %s' % leaf_soil_channel)
         loginf('using temp_hum_1_channel %s' % self.temp_hum_1_channel)
@@ -177,7 +177,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
                 rain_count = 0
             # handle rain counter wrap around from 255 to 0
             if rain_count < 0:
-                rain_count += 256
+                rain_count += 128
             self.last_rain_count = packet['rain']
             packet['rain'] = rain_count * self.rain_per_tip # mm
             if DEBUG_RAIN:
@@ -238,12 +238,14 @@ class Meteostick(object):
 
     @staticmethod
     def parse_readings(raw, iss_channel=0, th1_channel=0, th2_channel=0):
+        data = dict()
+        if not raw:
+            return data
         parts = raw.split(' ')
         n = len(parts)
-        if n > 1:
-            if DEBUG_PARSE > 2:
-                logdbg("parts: %s (%s)" % (parts, n))
-            data = dict()
+        if DEBUG_PARSE > 2:
+            logdbg("parts: %s (%s)" % (parts, n))
+        try:
             if parts[0] == 'B':
                 if n >= 3:
                     data['in_temp'] = float(parts[1]) # C
@@ -253,24 +255,25 @@ class Meteostick(object):
             elif parts[0] in 'WT':
                 if n >= 5:
                     data['rf_signal'] = float(parts[4])
+                    bat = 1 if n >= 6 and parts[5] == 'L' else 0
                     if parts[0] == 'W':
                         if iss_channel != 0 and int(parts[1]) == iss_channel:
-                            data['bat_iss'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                            data['bat_iss'] = bat
                         else:
-                            data['bat_anemometer'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                            data['bat_anemometer'] = bat
                         data['wind_speed'] = float(parts[2]) # m/s
                         data['wind_dir'] = float(parts[3]) # degrees
                     elif parts[0] == 'T':
                         if th1_channel != 0 and int(parts[1]) == th1_channel:
-                            data['bat_th_1'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                            data['bat_th_1'] = bat
                             data['temp_1'] = float(parts[2]) # C
                             data['humid_1'] = float(parts[3]) # %
                         elif th2_channel != 0 and int(parts[1]) == th2_channel:
-                            data['bat_th_2'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                            data['bat_th_2'] = bat
                             data['temp_2'] = float(parts[2]) # C
                             data['humid_2'] = float(parts[3]) # %
                         else:
-                            data['bat_iss'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                            data['bat_iss'] = bat
                             data['temperature'] = float(parts[2]) # C
                             data['humidity'] = float(parts[3]) # %
                 else:
@@ -306,7 +309,9 @@ class Meteostick(object):
             else:
                 logerr("unknown sensor identifier '%s' in '%s'" %
                        (parts[0], raw))
-            return data
+        except ValueError, e:
+            logerr("parse failed for '%s': %s" % (raw, e))
+        return data
 
     def configure(self):
         # in logger mode, station sends records continuously
@@ -328,46 +333,33 @@ class Meteostick(object):
                 else:
                     response += c
         loginf("command: '%s' response: %s" % (command, response.split('\n')[0]))
-        if DEBUG_SERIAL:
+        if DEBUG_SERIAL > 2:
             logdbg("full response: %s" % response)
         # Discard any serial input from the device
         time.sleep(0.2)
         self.serial_port.flushInput()
 
         # Set device to listen to configured transmitters
-        command = 't' + str(self.transmitters) + '\r'
-        self.serial_port.write(command)
-        time.sleep(0.2)
-        response = self.serial_port.read(self.serial_port.inWaiting())
-        loginf("command: '%s' response: %s" % (command, response))
-        self.serial_port.flushInput()
+        self.send_command('t' + str(self.transmitters) + '\r')
 
         # Set to filter transmissions from anything other than transmitter 1
-        command = 'f1\r'
-        self.serial_port.write(command)
-        time.sleep(0.2)
-        response = self.serial_port.read(self.serial_port.inWaiting())
-        loginf("command: '%s' response: %s" % (command, response))
-        self.serial_port.flushInput()
+        self.send_command('f1\r')
 
         # Set device to produce machine readable data
-        command = 'o1\r'
-        self.serial_port.write(command)
-        time.sleep(0.2)
-        response = self.serial_port.read(self.serial_port.inWaiting())
-        loginf("command: '%s' response: %s" % (command, response))
-        self.serial_port.flushInput()
+        self.send_command('o1\r')
 
         # Set device to use the right frequency
         command = 'm0\r' if self.frequency == 'US' else 'm1\r'
+        self.send_command(command)
+
+        # From now on the device will produce lines with received data
+
+    def send_command(self, cmd):
         self.serial_port.write(command)
         time.sleep(0.2)
         response = self.serial_port.read(self.serial_port.inWaiting())
-        loginf("command: '%s' response: %s" % (command, response))
+        loginf("command: '%s' response: %s" % (cmd, response))
         self.serial_port.flushInput()
-
-        # From now on the device will produce lines with received data
-        # Ignore data of first line (may not be complete)
 
     @staticmethod
     def ch_to_xmit(iss_channel, anemometer_channel, leaf_soil_channel,
