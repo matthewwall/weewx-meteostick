@@ -327,7 +327,7 @@ class Meteostick(object):
                     ready = True
                 else:
                     response += c
-        loginf("command: '%s' response: %s" % (command, response.split('\n')))
+        loginf("command: '%s' response: %s" % (command, response.split('\n')[0]))
         if DEBUG_SERIAL:
             logdbg("full response: %s" % response)
         # Discard any serial input from the device
