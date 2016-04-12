@@ -318,14 +318,18 @@ class Meteostick(object):
         self.serial_port.write(command)
         # Wait until we see the ? character
         ready = False
+        response = ''
         while not ready:
             time.sleep(0.1)
             while self.serial_port.inWaiting() > 0:
-                response = self.serial_port.read(1)
-                if response == '?':
+                c = self.serial_port.read(1)
+                if c == '?':
                     ready = True
-                elif response.find('Meteostick Version') >= 0:
-                    loginf("command: '%s' response: %s" % (command, response))
+                else:
+                    response += c
+        loginf("command: '%s' response: %s" % (command, response.split('\n')))
+        if DEBUG_SERIAL:
+            logdbg("full response: %s" % response)
         # Discard any serial input from the device
         time.sleep(0.2)
         self.serial_port.flushInput()
