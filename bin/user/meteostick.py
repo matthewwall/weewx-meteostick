@@ -24,7 +24,7 @@ import weewx
 import weewx.drivers
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.10'
+DRIVER_VERSION = '0.11'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -179,7 +179,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
             if rain_count < 0:
                 rain_count += 128
             self.last_rain_count = packet['rain']
-            packet['rain'] = rain_count * self.rain_per_tip # mm
+            packet['rain'] = float(rain_count) * self.rain_per_tip # mm
             if DEBUG_RAIN:
                 logdbg("rain=%s rain_count=%s last_rain_count=%s" %
                        (packet['rain'], rain_count, self.last_rain_count))
@@ -295,7 +295,7 @@ class Meteostick(object):
                     data['rf_signal'] = float(parts[3])
                     data['bat_iss'] = 1 if n >= 5 and parts[4] == 'L' else 0
                     if parts[0] == 'R':
-                        data['rain_count'] = float(parts[2])  # 0-255
+                        data['rain_count'] = int(parts[2])  # 0-255
                     elif parts[0] == 'S':
                         data['solar_radiation'] = float(parts[2])  # W/m^2
                     elif parts[0] == 'U':

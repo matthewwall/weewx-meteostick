@@ -1,3 +1,6 @@
+0.11 13apr2016
+* use int for rain_count
+
 0.10 12apr2016
 * rain counter wraparound is 128 not 256
 * prevent failure when empty sentence from meteostick
