@@ -37,11 +37,12 @@ import weewx
 import weewx.drivers
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.12'
+DRIVER_VERSION = '0.13'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
 DEBUG_PARSE = 0
+DEBUG_RFS = 0
 
 
 def loader(config_dict, _):
@@ -72,6 +73,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
     DEFAULT_PORT = '/dev/ttyUSB0'
     DEFAULT_BAUDRATE = 115200
     DEFAULT_FREQUENCY = 'EU'
+    DEFAULT_RAIN_BUCKET_TYPE = 1
     DEFAULT_RF_SENSITIVITY = 90
     DEFAULT_SENSOR_MAP = {
         'pressure': 'pressure',
@@ -120,7 +122,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         transmitters = Meteostick.ch_to_xmit(
             self.iss_channel, anemometer_channel, leaf_soil_channel,
             self.temp_hum_1_channel, self.temp_hum_2_channel)
-        rain_bucket_type = int(stn_dict.get('rain_bucket_type', 0))
+        rain_bucket_type = int(stn_dict.get('rain_bucket_type',
+                                            self.DEFAULT_RAIN_BUCKET_TYPE))
         self.rain_per_tip = 0.254 if rain_bucket_type == 0 else 0.2 # mm
         self.sensor_map = stn_dict.get('sensor_map', self.DEFAULT_SENSOR_MAP)
         self.max_tries = int(stn_dict.get('max_tries', 10))
@@ -133,6 +136,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         DEBUG_SERIAL = int(stn_dict.get('debug_serial', DEBUG_SERIAL))
         global DEBUG_RAIN
         DEBUG_RAIN = int(stn_dict.get('debug_rain', DEBUG_RAIN))
+        global DEBUG_RFS
+        DEBUG_RFS = int(stn_dict.get('debug_rf_sensitivity', DEBUG_RFS))
 
         loginf('using serial port %s' % port)
         loginf('using baudrate %s' % baudrate)
@@ -166,7 +171,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
             readings = self.station.get_readings_with_retry(self.max_tries,
                                                             self.retry_wait)
             if len(readings) > 0:
-                if DEBUG_PARSE:
+                if DEBUG_PARSE or DEBUG_RFS:
                     logdbg("readings: %s" % readings)
                 data = Meteostick.parse_readings(
                     readings, self.iss_channel,
@@ -439,7 +444,7 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
     temp_hum_2_channel = 0
 
     # Rain bucket type: 0 is 0.01 inch per tip, 1 is 0.2 mm per tip
-    rain_bucket_type = 0
+    rain_bucket_type = 1
 
     # The driver to use
     driver = user.meteostick
@@ -456,7 +461,7 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
         settings['transceiver_frequency'] = self._prompt('frequency', 'EU', ['US', 'EU', 'AU'])
         print "Specify the type of the rain bucket,"
         print "either 0 (0.01 inches per tip) or 1 (0.2 mm per tip)"
-        settings['rain_bucket_type'] = self._prompt('rain_bucket_type', 0)
+        settings['rain_bucket_type'] = self._prompt('rain_bucket_type', MeteostickDriver.DEFAULT_RAIN_BUCKET_TYPE)
         print "Specify the channel of the ISS (1-8)"
         settings['iss_channel'] = self._prompt('iss_channel', 1)
         print "Specify the channel of the Anemometer Transmitter Kit if any (0=none; 1-8)"

@@ -1,3 +1,11 @@
+0.13 20apr2016
+* default rain bucket is 1 to match default frequency of EU
+* added flag for debugging RF sensitivity
+
+0.12 20apr2016
+* added option to set RF sensitivity
+* added support for australian frequencies
+
 0.11 13apr2016
 * use int for rain_count
 
