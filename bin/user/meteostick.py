@@ -15,6 +15,19 @@
 #
 # Thanks to Frank Bandle for testing during the development of this driver.
 
+"""Meteostick is a USB device that receives radio transmissions from Davis
+weather stations.
+
+The meteostick has a preset radio frequency (RF) treshold value which is twice
+the RF sensity value in dB.  Valid values for RF sensity range from 0 to 125 in
+steps of 5. Both positive and negative parameter values will be treated as the
+same actual (negative) dB values and rounded to the nearest 5 dB value.
+
+The default RF sensitivity value is 90 (-90 dB).  Values between 95 and 125
+tend to give too much noise and false readings (the higher value the more
+noise).  Values lower than 50 likely result in no readings at all.
+"""
+
 from __future__ import with_statement
 import serial
 import syslog
@@ -24,7 +37,7 @@ import weewx
 import weewx.drivers
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.11'
+DRIVER_VERSION = '0.12'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -59,6 +72,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
     DEFAULT_PORT = '/dev/ttyUSB0'
     DEFAULT_BAUDRATE = 115200
     DEFAULT_FREQUENCY = 'EU'
+    DEFAULT_RF_SENSITIVITY = 90
     DEFAULT_SENSOR_MAP = {
         'pressure': 'pressure',
         'in_temp': 'inTemp',
@@ -96,6 +110,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         port = stn_dict.get('port', self.DEFAULT_PORT)
         baudrate = stn_dict.get('baudrate', self.DEFAULT_BAUDRATE)
         freq = stn_dict.get('transceiver_frequency', self.DEFAULT_FREQUENCY)
+        rfs = int(stn_dict.get('rf_sensitivity', self.DEFAULT_RF_SENSITIVITY))
+        rf_thold, rfs_actual = Meteostick.sens_to_threshold(rfs)
         self.iss_channel = int(stn_dict.get('iss_channel', 1))
         anemometer_channel = int(stn_dict.get('anemometer_channel', 0))
         leaf_soil_channel = int(stn_dict.get('leaf_soil_channel', 0))
@@ -121,6 +137,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         loginf('using serial port %s' % port)
         loginf('using baudrate %s' % baudrate)
         loginf('using frequency %s' % freq)
+        loginf('using rf sensitivity %s (-%s dB)' % (rfs, rfs_actual))
         loginf('using iss_channel %s' % self.iss_channel)
         loginf('using anemometer_channel %s' % anemometer_channel)
         loginf('using leaf_soil_channel %s' % leaf_soil_channel)
@@ -130,7 +147,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         loginf('using transmitters %02x' % transmitters)
         loginf('sensor map is: %s' % self.sensor_map)
 
-        self.station = Meteostick(port, baudrate, transmitters, freq)
+        self.station = Meteostick(port, baudrate, transmitters, freq, rf_thold)
         self.station.open()
 
     def closePort(self):
@@ -187,12 +204,13 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
 
 
 class Meteostick(object):
-    def __init__(self, port, baudrate, transmitters, frequency):
+    def __init__(self, port, baudrate, transmitters, frequency, threshold):
         self.port = port
         self.baudrate = baudrate
+        self.timeout = 3 # seconds
         self.transmitters = transmitters
         self.frequency = frequency
-        self.timeout = 3 # seconds
+        self.rf_threshold = threshold
         self.serial_port = None
 
     def __enter__(self):
@@ -339,6 +357,9 @@ class Meteostick(object):
         time.sleep(0.2)
         self.serial_port.flushInput()
 
+        # Set rf threshold
+        self.send_command('x' + str(self.rf_threshold) + '\r')
+
         # Set device to listen to configured transmitters
         self.send_command('t' + str(self.transmitters) + '\r')
 
@@ -349,7 +370,13 @@ class Meteostick(object):
         self.send_command('o1\r')
 
         # Set device to use the right frequency
-        command = 'm0\r' if self.frequency == 'US' else 'm1\r'
+        # Valid frequencies are US, EU and AU
+        if self.frequency == 'AU':
+            command = 'm2\r'
+        elif self.frequency == 'EU':
+            command = 'm1\r'
+        else:
+            command = 'm0\r' # default to US
         self.send_command(command)
 
         # From now on the device will produce lines with received data
@@ -376,6 +403,15 @@ class Meteostick(object):
             transmitters += 1 << (temp_hum_2_channel - 1)
         return transmitters
 
+    @staticmethod
+    def sens_to_threshold(rf_sens_request):
+        # given a sensitivity value (positive or negative), calculate the
+        # corresponding threshold plus the actual sensitivity, which is the
+        # requested sensitivity rounded to the nearest 5 dB (a positive value).
+        s = ((abs(rf_sens_request) + 2) / 5) * 5
+        s = MeteostickDriver.DEFAULT_RF_SENSITIVITY if s > 125 else s
+        return s * 2, s
+
 
 class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
     @property
@@ -387,8 +423,10 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
     # The serial port to which the meteostick is attached, e.g., /dev/ttyS0
     port = /dev/ttyUSB0
 
-    # Radio frequency to use between USB transceiver and console: US or EU
-    # US uses 915 MHz, EU uses 868.3 MHz
+    # Radio frequency to use between USB transceiver and console: US, EU or AU
+    # US uses 915 MHz
+    # EU uses 868.3 MHz
+    # AU uses 915 MHz but has different frequency hopping values than US
     transceiver_frequency = EU
 
     # A channel has value 0-8 where 0 indicates not present
@@ -414,11 +452,11 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
         print "for example /dev/ttyUSB0 or /dev/ttyS0"
         settings['port'] = self._prompt('port', MeteostickDriver.DEFAULT_PORT)
         print "Specify the frequency between the station and the meteostick,"
-        print "either US (915 MHz) or EU (868.3 MHz)"
-        settings['transceiver_frequency'] = self._prompt('frequency', 'EU', ['US', 'EU'])
+        print "US (915 MHz), EU (868.3 MHz), AU (915 MHz)"
+        settings['transceiver_frequency'] = self._prompt('frequency', 'EU', ['US', 'EU', 'AU'])
         print "Specify the type of the rain bucket,"
         print "either 0 (0.01 inches per tip) or 1 (0.2 mm per tip)"
-        settings['rain_bucket_type'] = self._prompt('rain_bucket_type', 1)
+        settings['rain_bucket_type'] = self._prompt('rain_bucket_type', 0)
         print "Specify the channel of the ISS (1-8)"
         settings['iss_channel'] = self._prompt('iss_channel', 1)
         print "Specify the channel of the Anemometer Transmitter Kit if any (0=none; 1-8)"
@@ -456,6 +494,9 @@ if __name__ == '__main__':
     parser.add_option('--freq', dest='frequency', metavar='FREQUENCY',
                       help='comm frequency, either US (915MHz) or EU (868MHz)',
                       default=MeteostickDriver.DEFAULT_FREQUENCY)
+    parser.add_option('--rfs', dest='rfs', metavar='RF_SENSITIVITY',
+                      help='RF sensitivity in dB',
+                      default=MeteostickDriver.DEFAULT_RF_SENSITIVITY)
     parser.add_option('--iss-channel', dest='c_iss', metavar='ISS_CHANNEL',
                       help='channel for ISS', default=1)
     parser.add_option('--anemometer-channel', dest='c_a',
@@ -478,7 +519,9 @@ if __name__ == '__main__':
         int(options.c_iss), int(options.c_a), int(options.c_ls),
         int(options.c_th1), int(options.c_th2))
 
+    threshold, _ = Meteostick.sens_to_threshold(int(options.rfs))
+
     with Meteostick(options.port, options.baudrate, xmitters,
-                    options.frequency) as s:
+                    options.frequency, threshold) as s:
         while True:
             print time.time(), s.get_readings()
