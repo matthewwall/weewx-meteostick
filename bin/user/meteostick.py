@@ -309,9 +309,9 @@ class Meteostick(object):
 
     @staticmethod
     def parse_readings(raw, iss_channel=0, th1_channel=0, th2_channel=0):
-        if not raw:
-            return None
         data = dict()
+        if not raw:
+            return data
         parts = raw.split(' ')
         n = len(parts)
         if DEBUG_PARSE > 2:
