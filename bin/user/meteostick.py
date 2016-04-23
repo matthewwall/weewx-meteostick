@@ -37,7 +37,7 @@ import weewx
 import weewx.drivers
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.13'
+DRIVER_VERSION = '0.14'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -85,7 +85,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         'rain_count': 'rain',
         'solar_radiation': 'radiation',
         'uv': 'UV',
-        'rf_signal': 'rxCheckPercent',
+        'pct_good': 'rxCheckPercent',
         'solar_power': 'extraTemp3',
         'soil_temp_1': 'soilTemp1',
         'soil_temp_2': 'soilTemp2',
@@ -115,12 +115,12 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         rfs = int(stn_dict.get('rf_sensitivity', self.DEFAULT_RF_SENSITIVITY))
         rf_thold, rfs_actual = Meteostick.sens_to_threshold(rfs)
         self.iss_channel = int(stn_dict.get('iss_channel', 1))
-        anemometer_channel = int(stn_dict.get('anemometer_channel', 0))
-        leaf_soil_channel = int(stn_dict.get('leaf_soil_channel', 0))
+        self.anemometer_channel = int(stn_dict.get('anemometer_channel', 0))
+        self.leaf_soil_channel = int(stn_dict.get('leaf_soil_channel', 0))
         self.temp_hum_1_channel = int(stn_dict.get('temp_hum_1_channel', 0))
         self.temp_hum_2_channel = int(stn_dict.get('temp_hum_2_channel', 0))
         transmitters = Meteostick.ch_to_xmit(
-            self.iss_channel, anemometer_channel, leaf_soil_channel,
+            self.iss_channel, self.anemometer_channel, self.leaf_soil_channel,
             self.temp_hum_1_channel, self.temp_hum_2_channel)
         rain_bucket_type = int(stn_dict.get('rain_bucket_type',
                                             self.DEFAULT_RAIN_BUCKET_TYPE))
@@ -138,14 +138,16 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         DEBUG_RAIN = int(stn_dict.get('debug_rain', DEBUG_RAIN))
         global DEBUG_RFS
         DEBUG_RFS = int(stn_dict.get('debug_rf_sensitivity', DEBUG_RFS))
+        if DEBUG_RFS:
+            self._init_rf_stats()
 
         loginf('using serial port %s' % port)
         loginf('using baudrate %s' % baudrate)
         loginf('using frequency %s' % freq)
         loginf('using rf sensitivity %s (-%s dB)' % (rfs, rfs_actual))
         loginf('using iss_channel %s' % self.iss_channel)
-        loginf('using anemometer_channel %s' % anemometer_channel)
-        loginf('using leaf_soil_channel %s' % leaf_soil_channel)
+        loginf('using anemometer_channel %s' % self.anemometer_channel)
+        loginf('using leaf_soil_channel %s' % self.leaf_soil_channel)
         loginf('using temp_hum_1_channel %s' % self.temp_hum_1_channel)
         loginf('using temp_hum_2_channel %s' % self.temp_hum_2_channel)
         loginf('using rain_bucket_type %s' % rain_bucket_type)
@@ -154,6 +156,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
 
         self.station = Meteostick(port, baudrate, transmitters, freq, rf_thold)
         self.station.open()
+        self.station.configure()
 
     def closePort(self):
         if self.station is not None:
@@ -165,23 +168,27 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         return 'Meteostick'
 
     def genLoopPackets(self):
-        self.station.configure()
-
         while True:
             readings = self.station.get_readings_with_retry(self.max_tries,
                                                             self.retry_wait)
-            if len(readings) > 0:
-                if DEBUG_PARSE or DEBUG_RFS:
-                    logdbg("readings: %s" % readings)
+            if DEBUG_PARSE or DEBUG_RFS:
+                logdbg("readings: %s" % readings)
+            if readings:
                 data = Meteostick.parse_readings(
                     readings, self.iss_channel,
                     self.temp_hum_1_channel, self.temp_hum_2_channel)
+                if DEBUG_PARSE:
+                    logdbg("data: %s" % data)
                 if data:
-                    if DEBUG_PARSE:
-                        logdbg("data: %s" % data)
                     packet = self._data_to_packet(data)
                     if DEBUG_PARSE:
                         logdbg("packet: %s" % packet)
+                    if DEBUG_RFS:
+                        self._update_rf_stats(data['channel'],
+                                              data['rf_signal'])
+                        if int(time.time()) - self.rf_stats['ts'] > 300:
+                            self._report_rf_stats()
+                            self._init_rf_stats()
                     yield packet
 
     def _data_to_packet(self, data):
@@ -206,6 +213,47 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
                 logdbg("rain=%s rain_count=%s last_rain_count=%s" %
                        (packet['rain'], rain_count, self.last_rain_count))
         return packet
+
+    def _init_rf_stats(self):
+        self.rf_stats = {
+            'min': [0] * 9,
+            'max': [-125] * 9,
+            'sum': [0] * 9,
+            'cnt': [0] * 9,
+            'last': [0] * 9,
+            'avg': [0] * 9,
+            'ts': int(time.time())}
+
+    def _update_rf_stats(self, ch, signal):
+        self.rf_stats['min'][ch] = min(signal, self.rf_stats['min'][ch])
+        self.rf_stats['max'][ch] = min(signal, self.rf_stats['max'][ch])
+        self.rf_stats['sum'][ch] += signal
+        self.rf_stats['cnt'][ch] += 1
+        self.rf_stats['last'][ch] = signal
+
+    def _report_rf_stats(self):
+        for ch in range(0, 8):
+            if self.rf_stats['cnt'][ch] > 0:
+                self.rf_stats['avg'][ch] = int(self.rf_stats['sum'][ch] / self.rf_stats['cnt'][ch])
+            else:
+                self.rf_stats['max'][ch] = 0
+        logdbg("RF summary (RF values in dB)")
+        logdbg("Station       max   min   avg  last  count")
+        for x in [('iss', self.iss_channel),
+                  ('wind': self.anemometer_channel),
+                  ('leaf_soil': self.leaf_soil_channel),
+                  ('temp_hum_1': self.temp_hum_1_channel),
+                  ('temp_hum_2': self.temp_hum_2_channel)]:
+            self._report_channel(x[0], x[1])
+
+    def _report_channel(self, label, ch):
+        if ch > 0:
+            logdbg("%s %5d %5d %5d %5d %5d" % (label,
+                                               self.rf_stats['min'][ch],
+                                               self.rf_stats['max'][ch],
+                                               self.rf_stats['avg'][ch],
+                                               self.rf_stats['last'][ch],
+                                               self.rf_stats['cnt'][ch]))
 
 
 class Meteostick(object):
@@ -261,37 +309,42 @@ class Meteostick(object):
 
     @staticmethod
     def parse_readings(raw, iss_channel=0, th1_channel=0, th2_channel=0):
-        data = dict()
         if not raw:
-            return data
+            return None
+        data = {'channel': None, 'rf_signal': None}
         parts = raw.split(' ')
         n = len(parts)
         if DEBUG_PARSE > 2:
             logdbg("parts: %s (%s)" % (parts, n))
         try:
             if parts[0] == 'B':
+                data['channel'] = 0
+                data['rf_signal'] = 0
                 if n >= 3:
                     data['in_temp'] = float(parts[1]) # C
                     data['pressure'] = float(parts[2]) # hPa
+                    if n >= 4:
+                        data['pct_good'] = 100.0 - float(parts[3].strip('%'))
                 else:
                     loginf("B: not enough parts (%s) in '%s'" % (n, raw))
             elif parts[0] in 'WT':
                 if n >= 5:
+                    data['channel'] = int(parts[1])
                     data['rf_signal'] = float(parts[4])
                     bat = 1 if n >= 6 and parts[5] == 'L' else 0
                     if parts[0] == 'W':
-                        if iss_channel != 0 and int(parts[1]) == iss_channel:
+                        if iss_channel != 0 and data['channel'] == iss_channel:
                             data['bat_iss'] = bat
                         else:
                             data['bat_anemometer'] = bat
                         data['wind_speed'] = float(parts[2]) # m/s
                         data['wind_dir'] = float(parts[3]) # degrees
                     elif parts[0] == 'T':
-                        if th1_channel != 0 and int(parts[1]) == th1_channel:
+                        if th1_channel != 0 and data['channel'] == th1_channel:
                             data['bat_th_1'] = bat
                             data['temp_1'] = float(parts[2]) # C
                             data['humid_1'] = float(parts[3]) # %
-                        elif th2_channel != 0 and int(parts[1]) == th2_channel:
+                        elif th2_channel != 0 and data['channel'] == th2_channel:
                             data['bat_th_2'] = bat
                             data['temp_2'] = float(parts[2]) # C
                             data['humid_2'] = float(parts[3]) # %
@@ -303,6 +356,7 @@ class Meteostick(object):
                     loginf("WT: not enough parts (%s) in '%s'" % (n, raw))
             elif parts[0] in 'LMO':
                 if n >= 5:
+                    data['channel'] = int(parts[1])
                     data['rf_signal'] = float(parts[4])
                     data['bat_soil_leaf'] = 1 if n >= 6 and parts[5] == 'L' else 0
                     if parts[0] == 'L':
@@ -315,6 +369,7 @@ class Meteostick(object):
                     loginf("LMO: not enough parts (%s) in '%s'" % (n, raw))
             elif parts[0] in 'RSUP':
                 if n >= 4:
+                    data['channel'] = int(parts[1])
                     data['rf_signal'] = float(parts[3])
                     data['bat_iss'] = 1 if n >= 5 and parts[4] == 'L' else 0
                     if parts[0] == 'R':
@@ -340,6 +395,9 @@ class Meteostick(object):
         # in logger mode, station sends records continuously
         if DEBUG_SERIAL:
             logdbg("set station to logger mode")
+
+        # flush any previous data in the input buffer
+        self.serial_port.flushInput()
 
         # Send a reset command
         command = 'r\n'

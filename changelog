@@ -1,3 +1,6 @@
+0.14 23apr2016
+* added RF signal tracking
+
 0.13 20apr2016
 * default rain bucket is 1 to match default frequency of EU
 * added flag for debugging RF sensitivity
