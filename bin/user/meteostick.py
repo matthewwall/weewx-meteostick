@@ -311,16 +311,16 @@ class Meteostick(object):
     def parse_readings(raw, iss_channel=0, th1_channel=0, th2_channel=0):
         if not raw:
             return None
-        data = {'channel': None, 'rf_signal': None}
+        data = dict()
         parts = raw.split(' ')
         n = len(parts)
         if DEBUG_PARSE > 2:
             logdbg("parts: %s (%s)" % (parts, n))
         try:
             if parts[0] == 'B':
-                data['channel'] = 0
-                data['rf_signal'] = 0
                 if n >= 3:
+                    data['channel'] = 0
+                    data['rf_signal'] = 0
                     data['in_temp'] = float(parts[1]) # C
                     data['pressure'] = float(parts[2]) # hPa
                     if n >= 4:
@@ -389,6 +389,7 @@ class Meteostick(object):
                        (parts[0], raw))
         except ValueError, e:
             logerr("parse failed for '%s': %s" % (raw, e))
+            data = dict() # do not return partial data
         return data
 
     def configure(self):
