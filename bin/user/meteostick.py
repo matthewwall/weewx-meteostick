@@ -240,10 +240,10 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         logdbg("RF summary (RF values in dB)")
         logdbg("Station       max   min   avg  last  count")
         for x in [('iss', self.iss_channel),
-                  ('wind': self.anemometer_channel),
-                  ('leaf_soil': self.leaf_soil_channel),
-                  ('temp_hum_1': self.temp_hum_1_channel),
-                  ('temp_hum_2': self.temp_hum_2_channel)]:
+                  ('wind', self.anemometer_channel),
+                  ('leaf_soil', self.leaf_soil_channel),
+                  ('temp_hum_1', self.temp_hum_1_channel),
+                  ('temp_hum_2', self.temp_hum_2_channel)]:
             self._report_channel(x[0], x[1])
 
     def _report_channel(self, label, ch):
@@ -291,8 +291,7 @@ class Meteostick(object):
         if DEBUG_SERIAL > 2 and len(buf) > 0:
             logdbg("station said: %s" %
                    ' '.join(["%0.2X" % ord(c) for c in buf]))
-        buf = buf.strip()
-        return buf
+        return buf.strip()
 
     def get_readings_with_retry(self, max_tries=5, retry_wait=10):
         for ntries in range(0, max_tries):
