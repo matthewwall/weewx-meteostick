@@ -19,9 +19,9 @@
 weather stations.
 
 The meteostick has a preset radio frequency (RF) treshold value which is twice
-the RF sensity value in dB.  Valid values for RF sensity range from 0 to 125 in
-steps of 5. Both positive and negative parameter values will be treated as the
-same actual (negative) dB values and rounded to the nearest 5 dB value.
+the RF sensity value in dB.  Valid values for RF sensity range from 0 to 125.
+Both positive and negative parameter values will be treated as the
+same actual (negative) dB values.
 
 The default RF sensitivity value is 90 (-90 dB).  Values between 95 and 125
 tend to give too much noise and false readings (the higher value the more
@@ -37,7 +37,7 @@ import weewx
 import weewx.drivers
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.14'
+DRIVER_VERSION = '0.15'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -48,33 +48,35 @@ DEBUG_RFS = 0
 def loader(config_dict, _):
     return MeteostickDriver(**config_dict[DRIVER_NAME])
 
-
 def confeditor_loader():
     return MeteostickConfEditor()
+
+def configurator_loader(config_dict):
+    return MeteostickConfigurator()
 
 
 def logmsg(level, msg):
     syslog.syslog(level, 'meteostick: %s' % msg)
 
-
 def logdbg(msg):
     logmsg(syslog.LOG_DEBUG, msg)
 
-
 def loginf(msg):
     logmsg(syslog.LOG_INFO, msg)
-
 
 def logerr(msg):
     logmsg(syslog.LOG_ERR, msg)
 
 
 class MeteostickDriver(weewx.drivers.AbstractDevice):
+    METEOSTICK_CHANNEL = 9 # fake channel for recording the receiver stats
+    NUM_CHAN = 10 # 8 channels, one fake channel (9), one unused channel (0)
     DEFAULT_PORT = '/dev/ttyUSB0'
     DEFAULT_BAUDRATE = 115200
     DEFAULT_FREQUENCY = 'EU'
     DEFAULT_RAIN_BUCKET_TYPE = 1
     DEFAULT_RF_SENSITIVITY = 90
+    MAX_RF_SENSITIVITY = 125
     DEFAULT_SENSOR_MAP = {
         'pressure': 'pressure',
         'in_temp': 'inTemp',
@@ -113,7 +115,11 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         baudrate = stn_dict.get('baudrate', self.DEFAULT_BAUDRATE)
         freq = stn_dict.get('transceiver_frequency', self.DEFAULT_FREQUENCY)
         rfs = int(stn_dict.get('rf_sensitivity', self.DEFAULT_RF_SENSITIVITY))
-        rf_thold, rfs_actual = Meteostick.sens_to_threshold(rfs)
+        self.rfs = abs(rfs)
+        if self.rfs > self.MAX_RF_SENSITIVITY:
+            self.rfs = self.DEFAULT_RF_SENSITIVITY
+            loginf("invalid RF sensitivity %s, using %s" % (rfs, self.rfs))
+        rf_thold = self.rfs * 2
         self.iss_channel = int(stn_dict.get('iss_channel', 1))
         self.anemometer_channel = int(stn_dict.get('anemometer_channel', 0))
         self.leaf_soil_channel = int(stn_dict.get('leaf_soil_channel', 0))
@@ -144,7 +150,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         loginf('using serial port %s' % port)
         loginf('using baudrate %s' % baudrate)
         loginf('using frequency %s' % freq)
-        loginf('using rf sensitivity %s (-%s dB)' % (rfs, rfs_actual))
+        loginf('using rf sensitivity %s (-%s dB)' % (rfs, abs_rfs))
         loginf('using iss_channel %s' % self.iss_channel)
         loginf('using anemometer_channel %s' % self.anemometer_channel)
         loginf('using leaf_soil_channel %s' % self.leaf_soil_channel)
@@ -186,7 +192,9 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
                     if DEBUG_RFS:
                         self._update_rf_stats(data['channel'],
                                               data['rf_signal'])
-                        if int(time.time()) - self.rf_stats['ts'] > 300:
+                        now = int(time.time())
+                        # report at 5 minute intervals
+                        if now - self.rf_stats['ts'] > 60 and now % 300 < 30:
                             self._report_rf_stats()
                             self._init_rf_stats()
                     yield packet
@@ -216,41 +224,44 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
 
     def _init_rf_stats(self):
         self.rf_stats = {
-            'min': [0] * 9,
-            'max': [-125] * 9,
-            'sum': [0] * 9,
-            'cnt': [0] * 9,
-            'last': [0] * 9,
-            'avg': [0] * 9,
+            'min': [0] * self.NUM_CHAN, # rf sensitivity has negative values
+            'max': [-125] * self.NUM_CHAN,
+            'sum': [0] * self.NUM_CHAN,
+            'cnt': [0] * self.NUM_CHAN,
+            'last': [0] * self.NUM_CHAN,
+            'avg': [0] * self.NUM_CHAN,
             'ts': int(time.time())}
+        # unlike the rf sensitivity measures, pct_good is positive
+        self.rf_stats['min'][self.METEOSTICK_CHANNEL] = 100
 
     def _update_rf_stats(self, ch, signal):
         self.rf_stats['min'][ch] = min(signal, self.rf_stats['min'][ch])
-        self.rf_stats['max'][ch] = min(signal, self.rf_stats['max'][ch])
+        self.rf_stats['max'][ch] = max(signal, self.rf_stats['max'][ch])
         self.rf_stats['sum'][ch] += signal
         self.rf_stats['cnt'][ch] += 1
         self.rf_stats['last'][ch] = signal
 
     def _report_rf_stats(self):
-        for ch in range(0, 8):
+        for ch in range(1, self.NUM_CHAN): # skip unused channel 0
             if self.rf_stats['cnt'][ch] > 0:
                 self.rf_stats['avg'][ch] = int(self.rf_stats['sum'][ch] / self.rf_stats['cnt'][ch])
             else:
                 self.rf_stats['max'][ch] = 0
-        logdbg("RF summary (RF values in dB)")
-        logdbg("Station       max   min   avg  last  count")
+        logdbg("RF summary: rf_sensitivity=%s (values in dB)" % self.rfs)
+        logdbg("Station      max   min   avg  last  count")
         for x in [('iss', self.iss_channel),
                   ('wind', self.anemometer_channel),
                   ('leaf_soil', self.leaf_soil_channel),
                   ('temp_hum_1', self.temp_hum_1_channel),
-                  ('temp_hum_2', self.temp_hum_2_channel)]:
+                  ('temp_hum_2', self.temp_hum_2_channel),
+                  ('pct_good', self.METEOSTICK_CHANNEL)]:
             self._report_channel(x[0], x[1])
 
     def _report_channel(self, label, ch):
         if ch > 0:
-            logdbg("%s %5d %5d %5d %5d %5d" % (label,
-                                               self.rf_stats['min'][ch],
+            logdbg("%s %5d %5d %5d %5d %5d" % (label.ljust(12),
                                                self.rf_stats['max'][ch],
+                                               self.rf_stats['min'][ch],
                                                self.rf_stats['avg'][ch],
                                                self.rf_stats['last'][ch],
                                                self.rf_stats['cnt'][ch]))
@@ -323,9 +334,11 @@ class Meteostick(object):
                     data['in_temp'] = float(parts[1]) # C
                     data['pressure'] = float(parts[2]) # hPa
                     if n >= 4:
-                        data['pct_good'] = 100.0 - float(parts[3].strip('%'))
+                        data['pct_good'] = float(parts[3].strip('%'))
+                        data['channel'] = self.METEOSTICK_CHANNEL
+                        data['rf_signal'] = data['pct_good']
                 else:
-                    loginf("B: not enough parts (%s) in '%s'" % (n, raw))
+                    logerr("B: not enough parts (%s) in '%s'" % (n, raw))
             elif parts[0] in 'WT':
                 if n >= 5:
                     data['channel'] = int(parts[1])
@@ -352,7 +365,7 @@ class Meteostick(object):
                             data['temperature'] = float(parts[2]) # C
                             data['humidity'] = float(parts[3]) # %
                 else:
-                    loginf("WT: not enough parts (%s) in '%s'" % (n, raw))
+                    logerr("WT: not enough parts (%s) in '%s'" % (n, raw))
             elif parts[0] in 'LMO':
                 if n >= 5:
                     data['channel'] = int(parts[1])
@@ -365,14 +378,19 @@ class Meteostick(object):
                     elif parts[0] == 'O':
                         data['soil_temp_%s' % parts[2]] = float(parts[3])  # C
                 else:
-                    loginf("LMO: not enough parts (%s) in '%s'" % (n, raw))
+                    logerr("LMO: not enough parts (%s) in '%s'" % (n, raw))
             elif parts[0] in 'RSUP':
                 if n >= 4:
                     data['channel'] = int(parts[1])
                     data['rf_signal'] = float(parts[3])
                     data['bat_iss'] = 1 if n >= 5 and parts[4] == 'L' else 0
                     if parts[0] == 'R':
-                        data['rain_count'] = int(parts[2])  # 0-255
+                        rain_count = int(parts[2])
+                        if 0 <= rain_count < 128:
+                            data['rain_count'] = rain_count  # 0-127
+                        else:
+                            logerr("ignoring invalid rain %s on channel %s" %
+                                   (rain_count, data['channel']))
                     elif parts[0] == 'S':
                         data['solar_radiation'] = float(parts[2])  # W/m^2
                     elif parts[0] == 'U':
@@ -380,7 +398,7 @@ class Meteostick(object):
                     elif parts[0] == 'P':
                         data['solar_power'] = float(parts[2])  # 0-100
                 else:
-                    loginf("RSUP: not enough parts (%s) in '%s'" % (n, raw))
+                    logerr("RSUP: not enough parts (%s) in '%s'" % (n, raw))
             elif parts[0] in '#':
                 loginf("%s" % raw)
             else:
@@ -466,15 +484,6 @@ class Meteostick(object):
             transmitters += 1 << (temp_hum_2_channel - 1)
         return transmitters
 
-    @staticmethod
-    def sens_to_threshold(rf_sens_request):
-        # given a sensitivity value (positive or negative), calculate the
-        # corresponding threshold plus the actual sensitivity, which is the
-        # requested sensitivity rounded to the nearest 5 dB (a positive value).
-        x = ((abs(rf_sens_request) + 2) / 5) * 5
-        x = MeteostickDriver.DEFAULT_RF_SENSITIVITY if x > 125 else x
-        return x * 2, x
-
 
 class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
     @property
@@ -531,6 +540,47 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
         print "Specify the channel of the second Temp/Humidity station if any (0=none; 1-8)"
         settings['temp_hum_2_channel'] = self._prompt('temp_hum_2_channel', 0)
         return settings
+
+
+def MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
+    def add_options(self, parser):
+        super(MeteostickConfigurator, self).add_options(parser)
+        parser.add_option(
+            "--info", dest="info", action="store_true",
+            help="display meteostick configuration")
+        parser.add_option(
+            "--show-options", dest="opts", action="store_true",
+            help="display meteostic command options")
+        parser.add_option(
+            "--set-verbose", dest="verbose", metavar="X", type=int,
+            help="set verbose: 0=off, 1=on; default off")
+        parser.add_option(
+            "--set-debug", dest="debug", metavar="X", type=int,
+            help="set debug: 0=off, 1=on; default off")
+        parser.add_option(
+            "--set-ledmode", dest="verbose", metavar="X", type=int,
+            help="set led mode: 0=high 1=low; default low")
+        parser.add_option(
+            "--set-bandwidth", dest="bandwidth", metavar="X", type=int,
+            help="set bandwidth: 0=narrow, 1=width; default narrow")
+        parser.add_option(
+            "--set-probe", dest="probe", metavar="X", type=int,
+            help="set probe: 0=off, 1=on; default off")
+        parser.add_option(
+            "--set-repeater", dest="repeater", metavar="X", type=int,
+            help="set repeater: 0-255; default 255")
+        parser.add_option(
+            "--set-channel", dest="channel", metavar="X", type=int,
+            help="set channel: 0-255; default 255")
+
+    def do_options(self, options, parser, config_dict, prompt):
+        driver = MeteostickDriver(**config_dict[DRIVER_NAME])
+        driver.disable_packets()
+        if options.opts:
+            print driver.cmd('')
+        else:
+            print driver.cmd('')
+        driver.closePort()
 
 
 # define a main entry point for basic testing of the station without weewx

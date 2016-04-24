@@ -1,3 +1,9 @@
+0.15 24apr2016
+* ignore (and log) invalid rain count values
+* track pct_good stats with rf stats
+* fix log level of parsing messages
+* added configurator for setting/getting meteostick parameters
+
 0.14 23apr2016
 * added RF signal tracking
 
