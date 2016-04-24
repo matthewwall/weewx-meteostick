@@ -471,9 +471,9 @@ class Meteostick(object):
         # given a sensitivity value (positive or negative), calculate the
         # corresponding threshold plus the actual sensitivity, which is the
         # requested sensitivity rounded to the nearest 5 dB (a positive value).
-        s = ((abs(rf_sens_request) + 2) / 5) * 5
-        s = MeteostickDriver.DEFAULT_RF_SENSITIVITY if s > 125 else s
-        return s * 2, s
+        x = ((abs(rf_sens_request) + 2) / 5) * 5
+        x = MeteostickDriver.DEFAULT_RF_SENSITIVITY if x > 125 else x
+        return x * 2, x
 
 
 class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
@@ -582,9 +582,9 @@ if __name__ == '__main__':
         int(options.c_iss), int(options.c_a), int(options.c_ls),
         int(options.c_th1), int(options.c_th2))
 
-    threshold, _ = Meteostick.sens_to_threshold(int(options.rfs))
+    t, _ = Meteostick.sens_to_threshold(int(options.rfs))
 
     with Meteostick(options.port, options.baudrate, xmitters,
-                    options.frequency, threshold) as s:
+                    options.frequency, t) as s:
         while True:
             print time.time(), s.get_readings()
