@@ -214,6 +214,9 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
                 rain_count = 0
             # handle rain counter wrap around from 127 to 0
             if rain_count < 0:
+                if DEBUG_RAIN:
+                    logdbg("rain counter wraparound detected rain_count=%s" %
+                           rain_count)
                 rain_count += 128
             self.last_rain_count = packet['rain']
             packet['rain'] = float(rain_count) * self.rain_per_tip # mm
@@ -518,7 +521,6 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
 
     # The driver to use
     driver = user.meteostick
-
 """
 
     def prompt_for_settings(self):
@@ -527,20 +529,20 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
         print "for example /dev/ttyUSB0 or /dev/ttyS0"
         settings['port'] = self._prompt('port', MeteostickDriver.DEFAULT_PORT)
         print "Specify the frequency between the station and the meteostick,"
-        print "US (915 MHz), EU (868.3 MHz), AU (915 MHz)"
+        print "one of US (915 MHz), EU (868.3 MHz), or AU (915 MHz)"
         settings['transceiver_frequency'] = self._prompt('frequency', 'EU', ['US', 'EU', 'AU'])
         print "Specify the type of the rain bucket,"
         print "either 0 (0.01 inches per tip) or 1 (0.2 mm per tip)"
         settings['rain_bucket_type'] = self._prompt('rain_bucket_type', MeteostickDriver.DEFAULT_RAIN_BUCKET_TYPE)
         print "Specify the channel of the ISS (1-8)"
         settings['iss_channel'] = self._prompt('iss_channel', 1)
-        print "Specify the channel of the Anemometer Transmitter Kit if any (0=none; 1-8)"
+        print "Specify the channel of the Anemometer Transmitter Kit (0=none; 1-8)"
         settings['anemometer_channel'] = self._prompt('anemometer_channel', 0)
-        print "Specify the channel of the Leaf & Soil station if any (0=none; 1-8)"
+        print "Specify the channel of the Leaf & Soil station (0=none; 1-8)"
         settings['leaf_soil_channel'] = self._prompt('leaf_soil_channel', 0)
-        print "Specify the channel of the first Temp/Humidity station if any (0=none; 1-8)"
+        print "Specify the channel of the first Temp/Humidity station (0=none; 1-8)"
         settings['temp_hum_1_channel'] = self._prompt('temp_hum_1_channel', 0)
-        print "Specify the channel of the second Temp/Humidity station if any (0=none; 1-8)"
+        print "Specify the channel of the second Temp/Humidity station (0=none; 1-8)"
         settings['temp_hum_2_channel'] = self._prompt('temp_hum_2_channel', 0)
         return settings
 
@@ -619,10 +621,10 @@ if __name__ == '__main__':
     parser.add_option('--port', dest='port', metavar='PORT',
                       help='serial port to which the station is connected',
                       default=MeteostickDriver.DEFAULT_PORT)
-    parser.add_option('--baud', dest='baudrate', metavar='BAUDRATE',
+    parser.add_option('--baud', dest='baud', metavar='BAUDRATE',
                       help='serial port baud rate',
                       default=MeteostickDriver.DEFAULT_BAUDRATE)
-    parser.add_option('--freq', dest='frequency', metavar='FREQUENCY',
+    parser.add_option('--freq', dest='freq', metavar='FREQUENCY',
                       help='comm frequency, either US (915MHz) or EU (868MHz)',
                       default=MeteostickDriver.DEFAULT_FREQUENCY)
     parser.add_option('--rfs', dest='rfs', metavar='RF_SENSITIVITY',
@@ -652,7 +654,6 @@ if __name__ == '__main__':
 
     t, _ = Meteostick.sens_to_threshold(int(opts.rfs))
 
-    with Meteostick(opts.port, opts.baudrate, xmitters,
-                    opts.frequency, t) as s:
+    with Meteostick(opts.port, opts.baud, xmitters, opts.freq, t) as s:
         while True:
             print time.time(), s.get_readings()
