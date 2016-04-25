@@ -240,13 +240,11 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         self.rf_stats['sum'][ch] += signal
         self.rf_stats['cnt'][ch] += 1
         self.rf_stats['last'][ch] = signal
-
-    def _report_rf_stats(self):
         for ch in range(1, self.NUM_CHAN): # skip unused channel 0
             if self.rf_stats['cnt'][ch] > 0:
                 self.rf_stats['avg'][ch] = int(self.rf_stats['sum'][ch] / self.rf_stats['cnt'][ch])
-            else:
-                self.rf_stats['max'][ch] = 0
+
+    def _report_rf_stats(self):
         logdbg("RF summary: rf_sensitivity=%s (values in dB)" % self.rfs)
         logdbg("Station      max   min   avg  last  count")
         for x in [('iss', self.iss_channel),
@@ -258,13 +256,12 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
             self._report_channel(x[0], x[1])
 
     def _report_channel(self, label, ch):
-        if ch > 0:
-            logdbg("%s %5d %5d %5d %5d %5d" % (label.ljust(12),
-                                               self.rf_stats['max'][ch],
-                                               self.rf_stats['min'][ch],
-                                               self.rf_stats['avg'][ch],
-                                               self.rf_stats['last'][ch],
-                                               self.rf_stats['cnt'][ch]))
+        logdbg("%s %5d %5d %5d %5d %5d" % (label.ljust(12),
+                                           self.rf_stats['max'][ch],
+                                           self.rf_stats['min'][ch],
+                                           self.rf_stats['avg'][ch],
+                                           self.rf_stats['last'][ch],
+                                           self.rf_stats['cnt'][ch]))
 
 
 class Meteostick(object):
@@ -409,17 +406,14 @@ class Meteostick(object):
             data = dict() # do not return partial data
         return data
 
-    def configure(self):
-        # in logger mode, station sends records continuously
-        if DEBUG_SERIAL:
-            logdbg("set station to logger mode")
+    def reset(self):
+        """Reset the device, leaving it in a state that we can talk to it."""
 
         # flush any previous data in the input buffer
         self.serial_port.flushInput()
 
         # Send a reset command
-        command = 'r\n'
-        self.serial_port.write(command)
+        self.serial_port.write('r\n')
         # Wait until we see the ? character
         ready = False
         response = ''
@@ -431,39 +425,48 @@ class Meteostick(object):
                     ready = True
                 else:
                     response += c
-        loginf("cmd: '%s': %s" % (command, response.split('\n')[0]))
+        loginf("reset: %s" % response.split('\n')[0])
         if DEBUG_SERIAL > 2:
             logdbg("full response to reset: %s" % response)
         # Discard any serial input from the device
         time.sleep(0.2)
         self.serial_port.flushInput()
+        return response
+
+    def configure(self):
+        """Configure the device to send data continuously."""
+        if DEBUG_SERIAL:
+            logdbg("set station to logger mode")
+
+        # Put device into state that we can talk to it reliably
+        self.reset()
 
         # Set rf threshold
-        self.send_command('x' + str(self.rf_threshold) + '\r')
+        self.send_command('x' + str(self.rf_threshold))
 
         # Set device to listen to configured transmitters
-        self.send_command('t' + str(self.transmitters) + '\r')
+        self.send_command('t' + str(self.transmitters))
 
         # Set to filter transmissions from anything other than transmitter 1
-        self.send_command('f1\r')
+        self.send_command('f1')
 
         # Set device to produce machine readable data
-        self.send_command('o1\r')
+        self.send_command('o1')
 
         # Set device to use the right frequency
         # Valid frequencies are US, EU and AU
         if self.frequency == 'AU':
-            command = 'm2\r'
+            command = 'm2'
         elif self.frequency == 'EU':
-            command = 'm1\r'
+            command = 'm1'
         else:
-            command = 'm0\r' # default to US
+            command = 'm0' # default to US
         self.send_command(command)
 
         # From now on the device will produce lines with received data
 
     def send_command(self, cmd):
-        self.serial_port.write(cmd)
+        self.serial_port.write(cmd + '\r')
         time.sleep(0.2)
         response = self.serial_port.read(self.serial_port.inWaiting())
         loginf("cmd: '%s': %s" % (cmd, response))
@@ -542,7 +545,7 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
         return settings
 
 
-def MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
+class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
     def add_options(self, parser):
         super(MeteostickConfigurator, self).add_options(parser)
         parser.add_option(
@@ -557,9 +560,10 @@ def MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
         parser.add_option(
             "--set-debug", dest="debug", metavar="X", type=int,
             help="set debug: 0=off, 1=on; default off")
+        # bug in meteostick: according to docs, 0=high, 1=low
         parser.add_option(
-            "--set-ledmode", dest="verbose", metavar="X", type=int,
-            help="set led mode: 0=high 1=low; default low")
+            "--set-ledmode", dest="led", metavar="X", type=int,
+            help="set led mode: 1=high 0=low; default low")
         parser.add_option(
             "--set-bandwidth", dest="bandwidth", metavar="X", type=int,
             help="set bandwidth: 0=narrow, 1=width; default narrow")
@@ -575,11 +579,25 @@ def MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
 
     def do_options(self, options, parser, config_dict, prompt):
         driver = MeteostickDriver(**config_dict[DRIVER_NAME])
-        driver.disable_packets()
+        info = driver.station.reset()
+        if options.info:
+            print info
+        cfg = {
+            'v': options.verbose,
+            'd': options.debug,
+            'l': options.led,
+            'b': options.bandwidth,
+            'p': options.probe,
+            'r': options.repeater,
+            'c': options.channel}
+        for opt in cfg:
+            if cfg[opt]:
+                cmd = opt + cfg[opt]
+                print "set station parameter %s" % cmd
+                driver.station.send_command(cmd)
         if options.opts:
-            print driver.cmd('')
-        else:
-            print driver.cmd('')
+            driver.station.send_command('?')
+            print driver.station.get()
         driver.closePort()
 
 
@@ -622,19 +640,19 @@ if __name__ == '__main__':
                       help='channel for T/H sensor 1', default=0)
     parser.add_option('--th2-channel', dest='c_th2', metavar='TH2_CHANNEL',
                       help='channel for T/H sensor 2', default=0)
-    (options, args) = parser.parse_args()
+    (opts, args) = parser.parse_args()
 
-    if options.version:
+    if opts.version:
         print "meteostick driver version %s" % DRIVER_VERSION
         exit(0)
 
     xmitters = Meteostick.ch_to_xmit(
-        int(options.c_iss), int(options.c_a), int(options.c_ls),
-        int(options.c_th1), int(options.c_th2))
+        int(opts.c_iss), int(opts.c_a), int(opts.c_ls),
+        int(opts.c_th1), int(opts.c_th2))
 
-    t, _ = Meteostick.sens_to_threshold(int(options.rfs))
+    t, _ = Meteostick.sens_to_threshold(int(opts.rfs))
 
-    with Meteostick(options.port, options.baudrate, xmitters,
-                    options.frequency, t) as s:
+    with Meteostick(opts.port, opts.baudrate, xmitters,
+                    opts.frequency, t) as s:
         while True:
             print time.time(), s.get_readings()

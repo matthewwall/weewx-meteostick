@@ -3,6 +3,8 @@
 * track pct_good stats with rf stats
 * fix log level of parsing messages
 * added configurator for setting/getting meteostick parameters
+* consolidate rf stat calculations
+* eliminate redundant cmd sequences
 
 0.14 23apr2016
 * added RF signal tracking
