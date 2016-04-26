@@ -348,7 +348,7 @@ class Meteostick(object):
                     data['in_temp'] = float(parts[1]) # C
                     data['pressure'] = float(parts[2]) # hPa
                     if n >= 4:
-                        data['channel'] = self.METEOSTICK_CHANNEL
+                        data['channel'] = Meteostick.METEOSTICK_CHANNEL
                         data['pct_good'] = float(parts[3].strip('%'))
                         data['rf_signal'] = data['pct_good']
                 else:
@@ -431,7 +431,7 @@ class Meteostick(object):
         try:
             if parts[0] == 'B':
                 if n >= 6:
-                    data['channel'] = self.METEOSTICK_CHANNEL
+                    data['channel'] = Meteostick.METEOSTICK_CHANNEL
                     data['pct_good'] = int(parts[5]) # number of good pkts
                     data['rf_signal'] = data['pct_good']
                     data['in_temp'] = float(parts[3]) / 10.0 # C
@@ -442,7 +442,7 @@ class Meteostick(object):
                 raw_msg = [0] * 8
                 for i in xrange(0, 8):
                     raw_msg[i] = chr(int(parts[i + 2], 16))
-                self.check_crc(raw_msg)
+                Meteostick.check_crc(raw_msg)
                 for i in xrange(0, 8):
                     raw_msg[i] = parts[i + 2]
                 pkt = bytearray([int(i, base=16) for i in raw_msg])
