@@ -182,28 +182,24 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         while True:
             readings = self.station.get_readings_with_retry(self.max_tries,
                                                             self.retry_wait)
-            if DEBUG_PARSE or DEBUG_RFS:
-                logdbg("readings: %s" % readings)
-            if readings:
-                data = Meteostick.parse_readings(
-                    readings, self.iss_channel,
-                    self.anemometer_channel, self.leaf_soil_channel,
-                    self.temp_hum_1_channel, self.temp_hum_2_channel)
+            data = self.station.parse_readings(
+                readings, self.iss_channel,
+                self.anemometer_channel, self.leaf_soil_channel,
+                self.temp_hum_1_channel, self.temp_hum_2_channel)
+            if DEBUG_PARSE:
+                logdbg("data: %s" % data)
+            if data:
+                packet = self._data_to_packet(data)
                 if DEBUG_PARSE:
-                    logdbg("data: %s" % data)
-                if data:
-                    packet = self._data_to_packet(data)
-                    if DEBUG_PARSE:
-                        logdbg("packet: %s" % packet)
-                    if DEBUG_RFS:
-                        self._update_rf_stats(data['channel'],
-                                              data['rf_signal'])
-                        now = int(time.time())
-                        # report at 5 minute intervals
-                        if now - self.rf_stats['ts'] > 60 and now % 300 < 30:
-                            self._report_rf_stats()
-                            self._init_rf_stats()
-                    yield packet
+                    logdbg("packet: %s" % packet)
+                if DEBUG_RFS:
+                    self._update_rf_stats(data['channel'], data['rf_signal'])
+                    now = int(time.time())
+                    # report at 5 minute intervals
+                    if now - self.rf_stats['ts'] > 60 and now % 300 < 30:
+                        self._report_rf_stats()
+                        self._init_rf_stats()
+                yield packet
 
     def _data_to_packet(self, data):
         packet = {'dateTime': int(time.time() + 0.5),
@@ -328,6 +324,8 @@ class Meteostick(object):
     def parse_readings(self, raw, iss_ch=0, ls_ch=0, wind_ch=0, th1_ch=0, th2_ch=0):
         if not raw:
             return dict()
+        if DEBUG_PARSE:
+            logdbg("readings: %s" % raw)
         parts = raw.split(' ')
         if DEBUG_PARSE > 2:
             logdbg("parts: %s (%s)" % (parts, len(parts)))
