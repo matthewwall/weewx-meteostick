@@ -329,10 +329,10 @@ class Meteostick(object):
     @staticmethod
     def parse_machine(raw, iss_channel, wind_channel,
                       ls_channel, th1_channel, th2_channel):
-        parts = Meteostick.get_parts(raw)
         data = dict()
-        n = len(parts)
         try:
+            parts = Meteostick.get_parts(raw)
+            n = len(parts)
             if parts[0] == 'B':
                 if n >= 3:
                     data['channel'] = 0
@@ -418,10 +418,10 @@ class Meteostick(object):
     @staticmethod
     def parse_raw(raw, iss_channel,
                   wind_channel, ls_channel, th1_channel, th2_channel):
-        parts = Meteostick.get_parts(raw)
         data = dict()
-        n = len(parts)
         try:
+            parts = Meteostick.get_parts(raw)
+            n = len(parts)
             if parts[0] == 'B':
                 if n >= 6:
                     data['channel'] = Meteostick.METEOSTICK_CHANNEL
