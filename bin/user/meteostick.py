@@ -29,15 +29,18 @@ noise).  Values lower than 50 likely result in no readings at all.
 """
 
 from __future__ import with_statement
+import math
 import serial
 import syslog
 import time
 
 import weewx
 import weewx.drivers
+import weewx.wxformulas
+from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.15'
+DRIVER_VERSION = '0.31'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -105,27 +108,29 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         'humid_2': 'extraHumid2',
         'bat_iss': 'txBatteryStatus',
         'bat_anemometer': 'windBatteryStatus',
-        'bat_soil_leaf': 'rainBatteryStatus',
+        'bat_leaf_soil': 'rainBatteryStatus',
         'bat_th_1': 'outTempBatteryStatus',
         'bat_th_2': 'inTempBatteryStatus'}
 
     def __init__(self, **stn_dict):
         loginf('driver version is %s' % DRIVER_VERSION)
         port = stn_dict.get('port', self.DEFAULT_PORT)
-        baudrate = stn_dict.get('baudrate', self.DEFAULT_BAUDRATE)
+        baud = stn_dict.get('baudrate', self.DEFAULT_BAUDRATE)
         freq = stn_dict.get('transceiver_frequency', self.DEFAULT_FREQUENCY)
         rfs = int(stn_dict.get('rf_sensitivity', self.DEFAULT_RF_SENSITIVITY))
         self.rfs = abs(rfs)
         if self.rfs > self.MAX_RF_SENSITIVITY:
             self.rfs = self.DEFAULT_RF_SENSITIVITY
             loginf("invalid RF sensitivity %s, using %s" % (rfs, self.rfs))
-        rf_thold = self.rfs * 2
+        fmt = stn_dict.get('format', 'machine') # human, machine, raw
+        if fmt.lower() not in ['machine', 'raw']:
+            raise ValueError("unsupported format '%s'" % fmt)
         self.iss_channel = int(stn_dict.get('iss_channel', 1))
         self.anemometer_channel = int(stn_dict.get('anemometer_channel', 0))
         self.leaf_soil_channel = int(stn_dict.get('leaf_soil_channel', 0))
         self.temp_hum_1_channel = int(stn_dict.get('temp_hum_1_channel', 0))
         self.temp_hum_2_channel = int(stn_dict.get('temp_hum_2_channel', 0))
-        transmitters = Meteostick.ch_to_xmit(
+        xmit = Meteostick.ch_to_xmit(
             self.iss_channel, self.anemometer_channel, self.leaf_soil_channel,
             self.temp_hum_1_channel, self.temp_hum_2_channel)
         rain_bucket_type = int(stn_dict.get('rain_bucket_type',
@@ -148,19 +153,19 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
             self._init_rf_stats()
 
         loginf('using serial port %s' % port)
-        loginf('using baudrate %s' % baudrate)
+        loginf('using baudrate %s' % baud)
         loginf('using frequency %s' % freq)
-        loginf('using rf sensitivity %s (-%s dB)' % (rfs, abs_rfs))
+        loginf('using rf sensitivity %s (-%s dB)' % (rfs, self.rfs))
         loginf('using iss_channel %s' % self.iss_channel)
         loginf('using anemometer_channel %s' % self.anemometer_channel)
         loginf('using leaf_soil_channel %s' % self.leaf_soil_channel)
         loginf('using temp_hum_1_channel %s' % self.temp_hum_1_channel)
         loginf('using temp_hum_2_channel %s' % self.temp_hum_2_channel)
         loginf('using rain_bucket_type %s' % rain_bucket_type)
-        loginf('using transmitters %02x' % transmitters)
+        loginf('using transmitters %02x' % xmit)
         loginf('sensor map is: %s' % self.sensor_map)
 
-        self.station = Meteostick(port, baudrate, transmitters, freq, rf_thold)
+        self.station = Meteostick(port, baud, xmit, freq, self.rfs, fmt)
         self.station.open()
         self.station.configure()
 
@@ -182,6 +187,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
             if readings:
                 data = Meteostick.parse_readings(
                     readings, self.iss_channel,
+                    self.anemometer_channel, self.leaf_soil_channel,
                     self.temp_hum_1_channel, self.temp_hum_2_channel)
                 if DEBUG_PARSE:
                     logdbg("data: %s" % data)
@@ -268,13 +274,15 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
 
 
 class Meteostick(object):
-    def __init__(self, port, baudrate, transmitters, frequency, threshold):
+    def __init__(self, port, baudrate, transmitters, frequency, rfs,
+                 output_format='machine'):
+        self.output_format = output_format
         self.port = port
         self.baudrate = baudrate
         self.timeout = 3 # seconds
         self.transmitters = transmitters
         self.frequency = frequency
-        self.rf_threshold = threshold
+        self.rf_threshold = rfs * 2
         self.serial_port = None
 
     def __enter__(self):
@@ -317,15 +325,23 @@ class Meteostick(object):
             logerr(msg)
             raise weewx.RetriesExceeded(msg)
 
-    @staticmethod
-    def parse_readings(raw, iss_channel=0, th1_channel=0, th2_channel=0):
-        data = dict()
+    def parse_readings(self, raw, iss_ch=0, ls_ch=0, wind_ch=0, th1_ch=0, th2_ch=0):
         if not raw:
-            return data
+            return dict()
         parts = raw.split(' ')
-        n = len(parts)
         if DEBUG_PARSE > 2:
-            logdbg("parts: %s (%s)" % (parts, n))
+            logdbg("parts: %s (%s)" % (parts, len(parts)))
+        if len(parts) < 2:
+            return dict()
+        if self.output_format == 'raw':
+            return self.parse_raw(parts, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch)
+        return self.parse_machine(parts, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch)
+
+    @staticmethod
+    def parse_machine(parts, iss_channel, wind_channel,
+                      ls_channel, th1_channel, th2_channel):
+        data = dict()
+        n = len(parts)
         try:
             if parts[0] == 'B':
                 if n >= 3:
@@ -334,8 +350,8 @@ class Meteostick(object):
                     data['in_temp'] = float(parts[1]) # C
                     data['pressure'] = float(parts[2]) # hPa
                     if n >= 4:
-                        data['pct_good'] = float(parts[3].strip('%'))
                         data['channel'] = self.METEOSTICK_CHANNEL
+                        data['pct_good'] = float(parts[3].strip('%'))
                         data['rf_signal'] = data['pct_good']
                 else:
                     logerr("B: not enough parts (%s) in '%s'" % (n, raw))
@@ -370,7 +386,7 @@ class Meteostick(object):
                 if n >= 5:
                     data['channel'] = int(parts[1])
                     data['rf_signal'] = float(parts[4])
-                    data['bat_soil_leaf'] = 1 if n >= 6 and parts[5] == 'L' else 0
+                    data['bat_leaf_soil'] = 1 if n >= 6 and parts[5] == 'L' else 0
                     if parts[0] == 'L':
                         data['leaf_wetness_%s' % parts[2]] = float(parts[3]) # 0-15
                     elif parts[0] == 'M':
@@ -409,6 +425,120 @@ class Meteostick(object):
             data = dict() # do not return partial data
         return data
 
+    @staticmethod
+    def parse_raw(parts, iss_channel,
+                  wind_channel, ls_channel, th1_channel, th2_channel):
+        data = dict()
+        n = len(parts)
+        try:
+            if parts[0] == 'B':
+                if n >= 6:
+                    data['channel'] = self.METEOSTICK_CHANNEL
+                    data['pct_good'] = int(parts[5]) # number of good pkts
+                    data['rf_signal'] = data['pct_good']
+                    data['in_temp'] = float(parts[3]) / 10.0 # C
+                    data['pressure'] = float(parts[4]) / 100.0 # hPa
+                else:
+                    logerr("B: not enough parts (%s) in '%s'" % (n, raw))
+            elif parts[0] == 'I':
+                raw_msg = [0] * 8
+                for i in xrange(0, 8):
+                    raw_msg[i] = chr(int(parts[i + 2], 16))
+                self.check_crc(raw_msg)
+                for i in xrange(0, 8):
+                    raw_msg[i] = parts[i + 2]
+                pkt = bytearray([int(i, base=16) for i in raw_msg])
+                data['channel'] = (pkt[0] & 0xF) + 1
+                data['rf_signal'] = int(parts[11])
+                if data['channel'] == iss_channel:
+                    # iss sensors
+                    message_type = (pkt[0] >> 4 & 0xF)
+                    if message_type == 2:
+                        # supercap voltage (Vue only)
+                        supercap_volt_raw = (pkt[3] * 4 + (pkt[4] & 0xC0) / 64)
+                        logdbg("supercap_volt_raw: %04x" % supercap_volt_raw)
+                        data['supercap_volt'] = supercap_volt_raw / 100.0
+                    elif message_type == 4:
+                        # uv
+                        uv_raw = pkt[3] * 256 + pkt[4]
+                        logdbg("uv_raw: %04x" % uv_raw)
+                        if uv_raw != 0xffc5:
+                            data['uv'] = uv_raw / 50.0
+                    elif message_type == 5:
+                        # rain rate
+                        if pkt[4] & 0x40 == 0:
+                            data['rain_rate'] = 720 / (((pkt[4] & 0x30) / 16 * 250) + pkt[3])
+                            logdbg("light_rain: %s" % data['rain_rate'])
+                        else:
+                            data['rain_rate'] = 11520 / (((pkt[4] & 0x30) / 16 * 250) + pkt[3])
+                            logdbg("heavy_rain: %s" % data['rain_rate'])
+                    elif message_type == 6:
+                        # solar radiation
+                        sr_raw = pkt[3] * 256 + pkt[4]
+                        logdbg("solar_radiation_raw: %04x" % sr_raw)
+                        if solar_radiation_raw != 0xffc5:
+                            data['solar_radiation'] = sr_raw * 1.757936
+                    elif message_type == 7:
+                        # solar cell output (Vue only)
+                        sco_raw = 0 # FIXME
+                        logdbg("solar_cell_output_raw: %s" % sco_raw)
+                        data['solar_cell_output'] = sco_raw # FIXME
+                    elif message_type == 8:
+                        # temperature
+                        temp_f_raw = pkt[3] * 256 + pkt[4]
+                        logdbg("temp_f_raw: %04x" % temp_f_raw)
+                        temp_f = temp_f_raw / 160.0
+                        data['temperature'] = weewx.wxformulas.FtoC(temp_f) # C
+                    elif message_type == 9:
+                        # wind gust
+                        wg_raw = 0 # FIXME
+                        logdgb("wind gust: %s" % wg_raw)
+                        data['wind_gust'] = wg_raw # FIXME
+                    elif message_type == 0xA:
+                        # humidity
+                        humidity_raw = ((pkt[4] >> 4) << 8) + pkt[3]
+                        logdbg("humidity_raw: %04x" % humidity_raw)
+                        data['humidity'] = humidity_raw / 10.0
+                    elif message_type == 0xE:
+                        # rain
+                        rain_count_raw = pkt[3] & 0x7F
+                        logdbg("rain_count_raw: %04x" % rain_count_raw)
+                        data['rain_count'] = rain_count_raw
+                    else:
+                        # unknown message type
+                        logerr("unknown message type %01x" % message_type)
+                elif data['channel'] == wind_channel:
+                    # wind sensors
+                    wind_speed_raw = pkt[1]
+                    logdbg("wind_speed_raw: %04x" % wind_speed_raw)
+                    data['wind_speed'] = wind_speed_raw * 0.44704 # mph to m/s
+                    wind_dir_raw = pkt[2]
+                    logdbg("wind_dir_raw: %04x" % wind_dir_raw)
+                    data['wind_dir'] = 9 + wind_dir_raw * 342.0 / 255.0
+                elif data['channel'] == ls_channel:
+                    # leaf and soil sensors
+                    data_type = pkt[0] >> 4
+                    if data_type == 0xf:
+                        data_subtype = pkt[1] & 0x3
+                        if data_subtype == 1:
+                            # soil temperature
+                            data = Meteostick.decode_soil(pkt)
+                        else:
+                            sensor_num = ((pkt[1] & 0xe0) >> 5) + 1
+                            l1_raw = (pkt[3] << 2) + (pkt[5] >> 6)
+                            l2_raw = (pkt[2] << 2) + (pkt[4] >> 6)
+                            logdbg("SOIL_LEAF_STATION: UNKNOWN data_subtype = %s" % data_subtype)
+                            logdbg("sensor_num: %s, l1_raw: %04x, l2_raw: %04x" % (sensor_num, l1_raw, l2_raw))
+            elif parts[0] in '#':
+                loginf("%s" % raw)
+            else:
+                logerr("unknown sensor identifier '%s' in '%s'" %
+                       (parts[0], raw))
+        except ValueError, e:
+            logerr("parse failed for '%s': %s" % (raw, e))
+            data = dict() # do not return partial data
+        return data
+
     def reset(self):
         """Reset the device, leaving it in a state that we can talk to it."""
 
@@ -435,6 +565,85 @@ class Meteostick(object):
         time.sleep(0.2)
         self.serial_port.flushInput()
         return response
+
+    @staticmethod
+    def decode_soil(pkt):
+        # decode the soil temperature then calculate the actual soil
+        # temperature and the soil potential, using Davis' formulas.
+        # when the sensor is not populated, soil_temp_raw and
+        # soil_potential_raw are set to their max values (0x3ff).
+        sensor_num = ((pkt[1] & 0xe0) >> 5) + 1
+        soil_temp_raw = (pkt[3] << 2) + (pkt[5] >> 6)
+        soil_potential_raw = (pkt[2] << 2) + (pkt[4] >> 6)
+        soil_temp = None
+        data = dict()
+        if soil_temp_raw != 0x3ff:
+            soil_temp = Meteostick._calculate_soil_temp(soil_temp_raw)
+            data['soil_temp_%s' % sensor_num] = soil_temp
+        if soil_potential_raw != 0x3ff:
+            soil_potential = Meteostick._calculate_soil_potential(
+                soil_potential_raw, soil_temp)
+            data['soil_moisture_%s' % sensor_num] = soil_potential
+        return data
+
+    @staticmethod
+    def _calculate_soil_temp(soil_temp_raw):
+        # soil_temp_raw is in degrees C
+        # R is in kohms
+        # https://github.com/dekay/DavisRFM69/wiki/Leaf-Soil-Moisture-Temperature-Station
+        logdbg('calculate soil temp from raw soil temp %s' % soil_temp_raw)
+        A = 18.81099
+        B = 0.0009988027
+        R = A / (1.0 / soil_temp_raw - B) / 1000
+        logdbg('thermistor resistance: %s kohm' % R)
+        # Steinhart-Hart parameters.
+        S1 = 0.002783573
+        S2 = 0.0002509406
+        try:
+            return 1 / (S1 + S2 * math.log(R)) - 273
+        except ValueError, e:
+            logerr('soil temp failed for raw temp %s: %s' % (soil_temp_raw, e))
+        return None
+
+    DEFAULT_SOIL_TEMP = 24 # C
+
+    @staticmethod
+    def _calculate_soil_potential(soil_potential_raw, soil_temp):
+        # Equations relating resistance to soil potential are from
+        # http://www.kimberly.uidaho.edu/water/swm/Calibration_Watermark2.htm
+        # The following units are used to make it easier to verify that the
+        # equations here match those from the above link
+        #
+        # soil_temp is in degrees C
+        # R is in kohms
+        # potential is in kPa (equivalently to centibar)
+        #
+        # https://github.com/dekay/DavisRFM69/wiki/Leaf-Soil-Moisture-Temperature-Station
+        logdbg('calculate soil potential from soil potential %s'
+               ' and soil temp %s' % (soil_potential_raw, soil_temp))
+        if soil_temp is None:
+            soil_temp = Meteostick.DEFAULT_SOIL_TEMP
+
+        A = 13.50903
+        B = 0.001070697
+        R = A / (1.0 / soil_potential_raw - B) / 1000
+        logdbg('soil moisture sensor resistance: %s kohm' % R)
+        if R <= 0:
+            logerr('resistance of soil moisture sensor is negative for raw soil potential %s' % soil_potential_raw)
+            return None
+        if R < 1:
+            potential = -20 * (R * (1 + 0.018 * (soil_temp - 24)) - 0.55)
+        elif R < 8:
+            potential = (-3.213 * R - 4.093) / (1 - 0.009733 * R - 0.01205 * soil_temp)
+        else:
+            potential = -2.246 - 5.239 * R * (1 + 0.018 * (soil_temp - 24)) \
+                - 0.06756 * R ** 2 * (1 + 0.018 * (soil_temp - 24)) ** 2
+        return potential
+
+    @staticmethod
+    def _check_crc(msg):
+        if crc16(msg) != 0:
+            raise ValueError("CRC error")
 
     def configure(self):
         """Configure the device to send data continuously."""
@@ -652,8 +861,6 @@ if __name__ == '__main__':
         int(opts.c_iss), int(opts.c_a), int(opts.c_ls),
         int(opts.c_th1), int(opts.c_th2))
 
-    t, _ = Meteostick.sens_to_threshold(int(opts.rfs))
-
-    with Meteostick(opts.port, opts.baud, xmitters, opts.freq, t) as s:
+    with Meteostick(opts.port, opts.baud, xmitters, opts.freq, opts.rfs) as s:
         while True:
             print time.time(), s.get_readings()

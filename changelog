@@ -1,3 +1,7 @@
+0.31 26apr2016
+* added parsing of raw output
+* added soil calculations
+
 0.15 24apr2016
 * ignore (and log) invalid rain count values
 * track pct_good stats with rf stats
