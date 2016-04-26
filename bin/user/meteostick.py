@@ -438,7 +438,7 @@ class Meteostick(object):
                 raw_msg = [0] * 8
                 for i in xrange(0, 8):
                     raw_msg[i] = chr(int(parts[i + 2], 16))
-                Meteostick.check_crc(raw_msg)
+                Meteostick._check_crc(raw_msg)
                 for i in xrange(0, 8):
                     raw_msg[i] = parts[i + 2]
                 pkt = bytearray([int(i, base=16) for i in raw_msg])
