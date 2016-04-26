@@ -322,22 +322,14 @@ class Meteostick(object):
             raise weewx.RetriesExceeded(msg)
 
     def parse_readings(self, raw, iss_ch=0, ls_ch=0, wind_ch=0, th1_ch=0, th2_ch=0):
-        if not raw:
-            return dict()
-        if DEBUG_PARSE:
-            logdbg("readings: %s" % raw)
-        parts = raw.split(' ')
-        if DEBUG_PARSE > 2:
-            logdbg("parts: %s (%s)" % (parts, len(parts)))
-        if len(parts) < 2:
-            return dict()
         if self.output_format == 'raw':
-            return self.parse_raw(parts, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch)
-        return self.parse_machine(parts, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch)
+            return self.parse_raw(raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch)
+        return self.parse_machine(raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch)
 
     @staticmethod
-    def parse_machine(parts, iss_channel, wind_channel,
+    def parse_machine(raw, iss_channel, wind_channel,
                       ls_channel, th1_channel, th2_channel):
+        parts = Meteostick.get_parts(raw)
         data = dict()
         n = len(parts)
         try:
@@ -424,8 +416,9 @@ class Meteostick(object):
         return data
 
     @staticmethod
-    def parse_raw(parts, iss_channel,
+    def parse_raw(raw, iss_channel,
                   wind_channel, ls_channel, th1_channel, th2_channel):
+        parts = Meteostick.get_parts(raw)
         data = dict()
         n = len(parts)
         try:
@@ -536,6 +529,19 @@ class Meteostick(object):
             logerr("parse failed for '%s': %s" % (raw, e))
             data = dict() # do not return partial data
         return data
+
+    @staticmethod
+    def get_parts(raw):
+        if not raw:
+            raise ValueError("empty data message")
+        if DEBUG_PARSE:
+            logdbg("readings: %s" % raw)
+        parts = raw.split(' ')
+        if DEBUG_PARSE > 2:
+            logdbg("parts: %s (%s)" % (parts, len(parts)))
+        if len(parts) < 2:
+            raise ValueError("not enough parts in '%s'" % raw)
+        return parts
 
     def reset(self):
         """Reset the device, leaving it in a state that we can talk to it."""
