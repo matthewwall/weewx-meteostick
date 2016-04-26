@@ -668,16 +668,18 @@ class Meteostick(object):
         self.send_command('f1')
 
         # Set device to produce machine readable data
+        command = 'o1'
+        if self.output_format == 'raw':
+            command = 'o0'
         self.send_command('o1')
 
         # Set device to use the right frequency
         # Valid frequencies are US, EU and AU
+        command = 'm0' # default to US
         if self.frequency == 'AU':
             command = 'm2'
         elif self.frequency == 'EU':
             command = 'm1'
-        else:
-            command = 'm0' # default to US
         self.send_command(command)
 
         # From now on the device will produce lines with received data
