@@ -671,7 +671,7 @@ class Meteostick(object):
         command = 'o1'
         if self.output_format == 'raw':
             command = 'o0'
-        self.send_command('o1')
+        self.send_command(command)
 
         # Set device to use the right frequency
         # Valid frequencies are US, EU and AU
