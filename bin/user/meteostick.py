@@ -71,8 +71,9 @@ def logerr(msg):
     logmsg(syslog.LOG_ERR, msg)
 
 
+METEOSTICK_CHANNEL = 9 # fake channel for recording the receiver stats
+
 class MeteostickDriver(weewx.drivers.AbstractDevice):
-    METEOSTICK_CHANNEL = 9 # fake channel for recording the receiver stats
     NUM_CHAN = 10 # 8 channels, one fake channel (9), one unused channel (0)
     DEFAULT_PORT = '/dev/ttyUSB0'
     DEFAULT_BAUDRATE = 115200
@@ -186,9 +187,9 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
                 readings, self.iss_channel,
                 self.anemometer_channel, self.leaf_soil_channel,
                 self.temp_hum_1_channel, self.temp_hum_2_channel)
-            if DEBUG_PARSE:
-                logdbg("data: %s" % data)
             if data:
+                if DEBUG_PARSE:
+                    logdbg("data: %s" % data)
                 packet = self._data_to_packet(data)
                 if DEBUG_PARSE:
                     logdbg("packet: %s" % packet)
@@ -237,7 +238,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
             'avg': [0] * self.NUM_CHAN,
             'ts': int(time.time())}
         # unlike the rf sensitivity measures, pct_good is positive
-        self.rf_stats['min'][self.METEOSTICK_CHANNEL] = 100
+        self.rf_stats['min'][METEOSTICK_CHANNEL] = 100
 
     def _update_rf_stats(self, ch, signal):
         self.rf_stats['min'][ch] = min(signal, self.rf_stats['min'][ch])
@@ -257,7 +258,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
                   ('leaf_soil', self.leaf_soil_channel),
                   ('temp_hum_1', self.temp_hum_1_channel),
                   ('temp_hum_2', self.temp_hum_2_channel),
-                  ('pct_good', self.METEOSTICK_CHANNEL)]:
+                  ('pct_good', METEOSTICK_CHANNEL)]:
             self._report_channel(x[0], x[1])
 
     def _report_channel(self, label, ch):
@@ -322,6 +323,8 @@ class Meteostick(object):
             raise weewx.RetriesExceeded(msg)
 
     def parse_readings(self, raw, iss_ch=0, ls_ch=0, wind_ch=0, th1_ch=0, th2_ch=0):
+        if not raw:
+            return dict()
         if self.output_format == 'raw':
             return self.parse_raw(raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch)
         return self.parse_machine(raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch)
@@ -340,7 +343,7 @@ class Meteostick(object):
                     data['in_temp'] = float(parts[1]) # C
                     data['pressure'] = float(parts[2]) # hPa
                     if n >= 4:
-                        data['channel'] = Meteostick.METEOSTICK_CHANNEL
+                        data['channel'] = METEOSTICK_CHANNEL
                         data['pct_good'] = float(parts[3].strip('%'))
                         data['rf_signal'] = data['pct_good']
                 else:
@@ -424,7 +427,7 @@ class Meteostick(object):
             n = len(parts)
             if parts[0] == 'B':
                 if n >= 6:
-                    data['channel'] = Meteostick.METEOSTICK_CHANNEL
+                    data['channel'] = METEOSTICK_CHANNEL
                     data['pct_good'] = int(parts[5]) # number of good pkts
                     data['rf_signal'] = data['pct_good']
                     data['in_temp'] = float(parts[3]) / 10.0 # C
@@ -532,8 +535,6 @@ class Meteostick(object):
 
     @staticmethod
     def get_parts(raw):
-        if not raw:
-            raise ValueError("empty data message")
         if DEBUG_PARSE:
             logdbg("readings: %s" % raw)
         parts = raw.split(' ')
@@ -791,6 +792,9 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
         parser.add_option(
             "--set-channel", dest="channel", metavar="X", type=int,
             help="set channel: 0-255; default 255")
+        parser.add_option(
+            "--set-channel", dest="format", metavar="X", type=int,
+            help="set format: 0=raw, 1=machine, 2=human")
 
     def do_options(self, options, parser, config_dict, prompt):
         driver = MeteostickDriver(**config_dict[DRIVER_NAME])
@@ -804,7 +808,8 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
             'b': options.bandwidth,
             'p': options.probe,
             'r': options.repeater,
-            'c': options.channel}
+            'c': options.channel,
+            'o': options.format}
         for opt in cfg:
             if cfg[opt]:
                 cmd = opt + cfg[opt]
