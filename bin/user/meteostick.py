@@ -486,7 +486,7 @@ class Meteostick(object):
                     elif message_type == 9:
                         # wind gust
                         wg_raw = 0 # FIXME
-                        logdgb("wind gust: %s" % wg_raw)
+                        logdbg("wind gust: %s" % wg_raw)
                         data['wind_gust'] = wg_raw # FIXME
                     elif message_type == 0xA:
                         # humidity
