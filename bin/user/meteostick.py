@@ -322,7 +322,8 @@ class Meteostick(object):
             logerr(msg)
             raise weewx.RetriesExceeded(msg)
 
-    def parse_readings(self, raw, iss_ch=0, ls_ch=0, wind_ch=0, th1_ch=0, th2_ch=0):
+    def parse_readings(self, raw, iss_ch=0,
+                       wind_ch=0, ls_ch=0, th1_ch=0, th2_ch=0):
         if not raw:
             return dict()
         if self.output_format == 'raw':
@@ -444,7 +445,7 @@ class Meteostick(object):
                 pkt = bytearray([int(i, base=16) for i in raw_msg])
                 data['channel'] = (pkt[0] & 0xF) + 1
                 data['rf_signal'] = int(parts[11])
-                if data['channel'] == iss_channel:
+                if data['channel'] == iss_channel or data['channel'] == wind_channel:
                     # iss sensors
                     message_type = (pkt[0] >> 4 & 0xF)
                     if message_type == 2:
@@ -493,6 +494,9 @@ class Meteostick(object):
                         humidity_raw = ((pkt[4] >> 4) << 8) + pkt[3]
                         logdbg("humidity_raw: %04x" % humidity_raw)
                         data['humidity'] = humidity_raw / 10.0
+                    elif message_type == 0xC:
+                        # unknown
+                        logdbg("unknown message type 0xC")
                     elif message_type == 0xE:
                         # rain
                         rain_count_raw = pkt[3] & 0x7F
@@ -501,7 +505,7 @@ class Meteostick(object):
                     else:
                         # unknown message type
                         logerr("unknown message type %01x" % message_type)
-                elif data['channel'] == wind_channel:
+                if data['channel'] == wind_channel:
                     # wind sensors
                     wind_speed_raw = pkt[1]
                     logdbg("wind_speed_raw: %04x" % wind_speed_raw)
