@@ -1,3 +1,11 @@
+0.32 27apr2016
+* fixed bug in decode_soil
+* checks to see if raw data not present
+* change soil moisture formula
+* added raw values of leaf_wetness to observations
+* added leaf_temp formula
+* minor log formatting changes
+
 0.31 26apr2016
 * added parsing of raw output
 * added soil calculations

@@ -40,7 +40,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.31'
+DRIVER_VERSION = '0.32'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -103,6 +103,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         'soil_moisture_4': 'soilMoist4',
         'leaf_wetness_1': 'leafWet1',
         'leaf_wetness_2': 'leafWet2',
+        'leaf_temp_1': 'leafTemp1',
+        'leaf_temp_2': 'leafTemp2',
         'temp_1': 'extraTemp1',
         'temp_2': 'extraTemp2',
         'humid_1': 'extraHumid1',
@@ -450,68 +452,88 @@ class Meteostick(object):
                     message_type = (pkt[0] >> 4 & 0xF)
                     if message_type == 2:
                         # supercap voltage (Vue only)
-                        supercap_volt_raw = (pkt[3] * 4 + (pkt[4] & 0xC0) / 64)
-                        logdbg("supercap_volt_raw: %04x" % supercap_volt_raw)
-                        data['supercap_volt'] = supercap_volt_raw / 100.0
+                        supercap_volt_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
+                        logdbg("supercap_volt_raw: 0x%03x" % supercap_volt_raw)
+                        if supercap_volt_raw != 0x3FF:
+                            data['supercap_volt'] = supercap_volt_raw / 100.0
                     elif message_type == 4:
                         # uv
-                        uv_raw = pkt[3] * 256 + pkt[4]
+                        uv_raw = (pkt[3] * 256 + pkt[4]) & 0xFFC0
                         logdbg("uv_raw: %04x" % uv_raw)
-                        if uv_raw != 0xffc5:
+                        if uv_raw != 0xFFC0:
                             data['uv'] = uv_raw / 50.0
                     elif message_type == 5:
                         # rain rate
-                        if pkt[4] & 0x40 == 0:
-                            data['rain_rate'] = 720 / (((pkt[4] & 0x30) / 16 * 250) + pkt[3])
-                            logdbg("light_rain: %s" % data['rain_rate'])
+                        logdbg("rain rate pkt[3]: 0x%02x. pkt[4]: 0x%02x" % (pkt[3], pkt[4]))
+                        if pkt[3] == 0xFF:
+                            # no rain
+                            data['rain_rate'] = 0
                         else:
-                            data['rain_rate'] = 11520 / (((pkt[4] & 0x30) / 16 * 250) + pkt[3])
-                            logdbg("heavy_rain: %s" % data['rain_rate'])
+                            if pkt[4] & 0x40 == 0:
+                                # light rain
+                                data['rain_rate'] = 720 / (((pkt[4] & 0x30) / 16 * 250) + pkt[3])
+                                logdbg("light_rain: %s" % data['rain_rate'])
+                            else:
+                                # heavy rain
+                                data['rain_rate'] = 11520 / (((pkt[4] & 0x30) / 16 * 250) + pkt[3])
+                                logdbg("heavy_rain: %s" % data['rain_rate'])
                     elif message_type == 6:
                         # solar radiation
-                        sr_raw = pkt[3] * 256 + pkt[4]
-                        logdbg("solar_radiation_raw: %04x" % sr_raw)
-                        if solar_radiation_raw != 0xffc5:
+                        sr_raw = (pkt[3] * 256 + pkt[4]) & 0xFFC0
+                        logdbg("solar_radiation_raw: 0x%04x" % sr_raw)
+                        if sr_raw != 0xFFC0:
                             data['solar_radiation'] = sr_raw * 1.757936
                     elif message_type == 7:
                         # solar cell output (Vue only)
-                        sco_raw = 0 # FIXME
-                        logdbg("solar_cell_output_raw: %s" % sco_raw)
-                        data['solar_cell_output'] = sco_raw # FIXME
+                        sco_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
+                        logdbg("sco_raw: 0x%03x" % sco_raw)
+                        if sco_raw != 0xFFC0:
+                            data['solar_cell_output'] = sco_raw # FIXME
                     elif message_type == 8:
                         # temperature
-                        temp_f_raw = pkt[3] * 256 + pkt[4]
+                        temp_f_raw = (pkt[3] * 256 + pkt[4]) & 0xFFC0
                         logdbg("temp_f_raw: %04x" % temp_f_raw)
-                        temp_f = temp_f_raw / 160.0
-                        data['temperature'] = weewx.wxformulas.FtoC(temp_f) # C
+                        if temp_f_raw != 0xFFC0:
+                            temp_f = temp_f_raw / 160.0
+                            data['temperature'] = weewx.wxformulas.FtoC(temp_f) # C
                     elif message_type == 9:
-                        # wind gust
-                        wg_raw = 0 # FIXME
-                        logdbg("wind gust: %s" % wg_raw)
-                        data['wind_gust'] = wg_raw # FIXME
+                        # 10-min average wind gust
+                        gust_raw = pkt[3]
+                        gust_index_raw = pkt[5] >> 4
+                        logdbg("gust_raw: %s, gust_index_raw: %s " % (gust_raw, gust_index_raw))
+                        if not(gust_raw == 0 and gust_index_raw == 0):
+                            logdbg("gust_raw: %s, gust_index_raw: %s " % (gust_raw, gust_index_raw))
+                            # don't store the 10-min gust data
                     elif message_type == 0xA:
                         # humidity
                         humidity_raw = ((pkt[4] >> 4) << 8) + pkt[3]
-                        logdbg("humidity_raw: %04x" % humidity_raw)
-                        data['humidity'] = humidity_raw / 10.0
+                        logdbg("humidity_raw: 0x%03x" % humidity_raw)
+                        if humidity_raw != 0:
+                            data['humidity'] = humidity_raw / 10.0
                     elif message_type == 0xC:
-                        # unknown
-                        logdbg("unknown message type 0xC")
+                        # unknown ATK message
+                        unknown_atk_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
+                        logdbg("unknown_atk_raw: 0x%03x" % unknown_atk_raw)
+                        if unknown_atk_raw != 0xFFC0:
+                            atk_raw = unknown_atk_raw # FIXME
+                            logdbg("unknown_atk: %s" % atk_raw)
                     elif message_type == 0xE:
                         # rain
                         rain_count_raw = pkt[3] & 0x7F
-                        logdbg("rain_count_raw: %04x" % rain_count_raw)
-                        data['rain_count'] = rain_count_raw
+                        logdbg("rain_count_raw: 0x%03x" % rain_count_raw)
+                        if rain_count_raw < 128:
+                            data['rain_count'] = rain_count_raw
                     else:
                         # unknown message type
-                        logerr("unknown message type %01x" % message_type)
-                if data['channel'] == wind_channel:
+                        logerr("unknown message type 0x%01x" % message_type)
+                if ((data['channel'] == iss_channel and wind_channel == 0) or
+                    (data['channel'] == wind_channel and wind_channel != 0)):
                     # wind sensors
                     wind_speed_raw = pkt[1]
-                    logdbg("wind_speed_raw: %04x" % wind_speed_raw)
+                    logdbg("wind_speed_raw: %03x" % wind_speed_raw)
                     data['wind_speed'] = wind_speed_raw * 0.44704 # mph to m/s
                     wind_dir_raw = pkt[2]
-                    logdbg("wind_dir_raw: %04x" % wind_dir_raw)
+                    logdbg("wind_dir_raw: 0x%03x" % wind_dir_raw)
                     data['wind_dir'] = 9 + wind_dir_raw * 342.0 / 255.0
                 elif data['channel'] == ls_channel:
                     # leaf and soil sensors
@@ -520,13 +542,22 @@ class Meteostick(object):
                         data_subtype = pkt[1] & 0x3
                         if data_subtype == 1:
                             # soil temperature
-                            data = Meteostick.decode_soil(pkt)
-                        else:
+                            data.update(Meteostick.decode_soil(pkt))
+                        elif data_subtype == 2:
                             sensor_num = ((pkt[1] & 0xe0) >> 5) + 1
-                            l1_raw = (pkt[3] << 2) + (pkt[5] >> 6)
-                            l2_raw = (pkt[2] << 2) + (pkt[4] >> 6)
-                            logdbg("SOIL_LEAF_STATION: UNKNOWN data_subtype = %s" % data_subtype)
-                            logdbg("sensor_num: %s, l1_raw: %04x, l2_raw: %04x" % (sensor_num, l1_raw, l2_raw))
+                            lw_raw = ((pkt[2] << 2) + (pkt[4] >> 6)) & 0x3FF
+                            logdbg("lw_raw: 0x%03x" % lw_raw)
+                            if lw_raw != 0x34D:
+                                leaf_wetness = lw_raw # TODO
+                                data['leaf_wetness_%s' % sensor_num] = leaf_wetness
+                            lw_tmp_raw = ((pkt[3] << 2) + (pkt[5] >> 6)) & 0x3FF
+                            logdbg("lw_tmp_raw: 0x%03x" % lw_tmp_raw)
+                            if lw_tmp_raw != 0x3FF:
+                                lw_temp_c = lw_tmp_raw / 10.0
+                                data['leaf_temp_%s' % sensor_num] = lw_temp_c # C
+                        else:
+                            logerr("unknown subtype '%s' in '%s'" % (data_subtype, raw))
+
             elif parts[0] in '#':
                 loginf("%s" % raw)
             else:
@@ -581,15 +612,16 @@ class Meteostick(object):
         # temperature and the soil potential, using Davis' formulas.
         # when the sensor is not populated, soil_temp_raw and
         # soil_potential_raw are set to their max values (0x3ff).
-        sensor_num = ((pkt[1] & 0xe0) >> 5) + 1
-        soil_temp_raw = (pkt[3] << 2) + (pkt[5] >> 6)
-        soil_potential_raw = (pkt[2] << 2) + (pkt[4] >> 6)
+        sensor_num = ((pkt[1] & 0xE0) >> 5) + 1
+        soil_temp_raw = ((pkt[3] << 2) + (pkt[5] >> 6)) & 0x3FF
+        soil_potential_raw = ((pkt[2] << 2) + (pkt[4] >> 6)) & 0x3FF
+        logdbg("soil_temp_raw: 0x%03x, soil_potential_raw: 0x%03x, " % (soil_temp_raw, soil_potential_raw))
         soil_temp = None
         data = dict()
-        if soil_temp_raw != 0x3ff:
+        if soil_temp_raw != 0x3FF:
             soil_temp = Meteostick._calculate_soil_temp(soil_temp_raw)
             data['soil_temp_%s' % sensor_num] = soil_temp
-        if soil_potential_raw != 0x3ff:
+        if soil_potential_raw != 0x3FF:
             soil_potential = Meteostick._calculate_soil_potential(
                 soil_potential_raw, soil_temp)
             data['soil_moisture_%s' % sensor_num] = soil_potential
@@ -627,7 +659,9 @@ class Meteostick(object):
         # R is in kohms
         # potential is in kPa (equivalently to centibar)
         #
-        # https://github.com/dekay/DavisRFM69/wiki/Leaf-Soil-Moisture-Temperature-Station
+        # https://github.com/dekay/DavisRFM69/wiki/Leaf-Soil-Moisture-Temperature-Station (give negative values)
+        # http://www.publicacionescajamar.es/pdf/series-tematicas/centros-experimentales-las-palmerillas/evaluation-of-the-watermark-sensor.pdf
+
         logdbg('calculate soil potential from soil potential %s'
                ' and soil temp %s' % (soil_potential_raw, soil_temp))
         if soil_temp is None:
@@ -643,10 +677,11 @@ class Meteostick(object):
         if R < 1:
             potential = -20 * (R * (1 + 0.018 * (soil_temp - 24)) - 0.55)
         elif R < 8:
-            potential = (-3.213 * R - 4.093) / (1 - 0.009733 * R - 0.01205 * soil_temp)
+            # lh potential = (-3.213 * R - 4.093) / (1 - 0.009733 * R - 0.01205 * soil_temp)
+            potential = (4.093 + 3.213 * R) / (1 - (0.009733 * R) - (0.01205 * soil_temp))
         else:
-            potential = -2.246 - 5.239 * R * (1 + 0.018 * (soil_temp - 24)) \
-                - 0.06756 * R ** 2 * (1 + 0.018 * (soil_temp - 24)) ** 2
+            potential = -2.246 - (5.239 * R) * (1 + 0.018 * (soil_temp - 24)) \
+                - (0.06756 * (R ** 2)) * ((1 + (0.018 * (soil_temp - 24))) ** 2)
         return potential
 
     @staticmethod
