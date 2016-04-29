@@ -1,3 +1,6 @@
+0.33 29apr2016
+* default to raw format
+
 0.32 27apr2016
 * fixed bug in decode_soil
 * checks to see if raw data not present

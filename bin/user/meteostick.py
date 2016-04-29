@@ -40,7 +40,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.32'
+DRIVER_VERSION = '0.33'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -125,7 +125,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         if self.rfs > self.MAX_RF_SENSITIVITY:
             self.rfs = self.DEFAULT_RF_SENSITIVITY
             loginf("invalid RF sensitivity %s, using %s" % (rfs, self.rfs))
-        fmt = stn_dict.get('format', 'machine') # human, machine, raw
+        fmt = stn_dict.get('format', 'raw') # human, machine, raw
         if fmt.lower() not in ['machine', 'raw']:
             raise ValueError("unsupported format '%s'" % fmt)
         self.iss_channel = int(stn_dict.get('iss_channel', 1))
