@@ -108,7 +108,7 @@ def calculate_leaf_soil_temp(leaf_soil_temp_raw):
     S2 = 0.0002509406
 
     try:
-        leaf_soil_temp =  1 / (S1 + S2 * math.log(R)) - 273
+        leaf_soil_temp = 1 / (S1 + S2 * math.log(R)) - 273
         logdbg('leaf_soil_temp: %s' % leaf_soil_temp)
         return leaf_soil_temp
     except ValueError, e:
@@ -340,9 +340,11 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         for ch in range(1, self.NUM_CHAN): # skip channel 0 (it is not used)
             if self.rf_stats['cnt'][ch] > 0:
                 self.rf_stats['avg'][ch] = int(self.rf_stats['sum'][ch] / self.rf_stats['cnt'][ch])
-        for ch in range(1, self.NUM_CHAN-1): # skip ch 0 and METEOSTICK_CHANNEL
+        for ch in range(1, self.NUM_CHAN - 1): # skip ch 0 and METEOSTICK_CHANNEL
             if self.rf_stats['cnt'][ch] > 0:
-                self.rf_stats['pctgood'][ch] = int(100.0 * self.rf_stats['cnt'][ch] / (self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch]))
+                self.rf_stats['pctgood'][ch] = \
+                    int(100.0 * self.rf_stats['cnt'][ch] /
+                        (self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch]))
 
     def _report_rf_stats(self):
         logdbg("RF summary: rf_sensitivity=%s (values in dB)" %
@@ -359,8 +361,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
 
     def _report_channel(self, label, ch):
         if 'missed' in self.rf_stats and 'pctgood' in self.rf_stats:
-            logdbg(1, "%s %5d %5d %5d %5d %5d %6d %6d" % (
-                    label.ljust(15),
+            logdbg("%s %5d %5d %5d %5d %5d %6d %6d" %
+                   (label.ljust(15),
                     self.rf_stats['max'][ch],
                     self.rf_stats['min'][ch],
                     self.rf_stats['avg'][ch],
@@ -369,8 +371,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
                     self.rf_stats['missed'][ch],
                     self.rf_stats['pctgood'][ch]))
         else:
-            logdbg(1, "%s %5d %5d %5d %5d %5d" % (
-                    label.ljust(15),
+            logdbg("%s %5d %5d %5d %5d %5d" %
+                   (label.ljust(15),
                     self.rf_stats['max'][ch],
                     self.rf_stats['min'][ch],
                     self.rf_stats['avg'][ch],
@@ -395,19 +397,19 @@ class Meteostick(object):
     MAX_RF_SENSITIVITY = 125
 
     def __init__(self, **cfg):
-        self.port = stn_dict.get('port', self.DEFAULT_PORT)
+        self.port = cfg.get('port', self.DEFAULT_PORT)
         loginf('using serial port %s' % self.port)
 
-        self.baudrate = stn_dict.get('baudrate', self.DEFAULT_BAUDRATE)
+        self.baudrate = cfg.get('baudrate', self.DEFAULT_BAUDRATE)
         loginf('using baudrate %s' % self.baudrate)
 
-        freq = stn_dict.get('transceiver_frequency', self.DEFAULT_FREQUENCY)
+        freq = cfg.get('transceiver_frequency', self.DEFAULT_FREQUENCY)
         if freq not in ['EU', 'US', 'AU']:
             raise ValueError("invalid frequency %s" % freq)
         self.frequency = freq
         loginf('using frequency %s' % self.frequency)
 
-        rfs = int(stn_dict.get('rf_sensitivity', self.DEFAULT_RF_SENSITIVITY))
+        rfs = int(cfg.get('rf_sensitivity', self.DEFAULT_RF_SENSITIVITY))
         absrfs = abs(rfs)
         if absrfs > self.MAX_RF_SENSITIVITY:
             raise ValueError("invalid RF sensitivity %s" % rfs)
@@ -415,16 +417,16 @@ class Meteostick(object):
         self.rf_threshold = absrfs * 2
         loginf('using rf sensitivity %s (-%s dB)' % (rfs, absrfs))
 
-        fmt = stn_dict.get('format', 'raw')
+        fmt = cfg.get('format', 'raw')
         if fmt.lower() not in ['machine', 'raw']:
             raise ValueError("unsupported format '%s'" % fmt)
         self.output_format = fmt
         channels = dict()
-        channels['iss'] = int(stn_dict.get('iss_channel', 1))
-        channels['anemometer'] = int(stn_dict.get('anemometer_channel', 0))
-        channels['leaf_soil'] = int(stn_dict.get('leaf_soil_channel', 0))
-        channels['temp_hum_1'] = int(stn_dict.get('temp_hum_1_channel', 0))
-        channels['temp_hum_2'] = int(stn_dict.get('temp_hum_2_channel', 0))
+        channels['iss'] = int(cfg.get('iss_channel', 1))
+        channels['anemometer'] = int(cfg.get('anemometer_channel', 0))
+        channels['leaf_soil'] = int(cfg.get('leaf_soil_channel', 0))
+        channels['temp_hum_1'] = int(cfg.get('temp_hum_1_channel', 0))
+        channels['temp_hum_2'] = int(cfg.get('temp_hum_2_channel', 0))
         if channels['anemometer'] == 0:
             channels['wind_channel'] = channels['iss']
         else: 
@@ -714,7 +716,7 @@ class Meteostick(object):
                 data['channel'] = (pkt[0] & 0xF) + 1
                 data['rf_signal'] = int(parts[11])
                 time_since_last = int(parts[12])
-                data['rf_missed'] = ((time_since_last + 1250000) // 2500000) -1
+                data['rf_missed'] = ((time_since_last + 1250000) // 2500000) - 1
 
                 if data['channel'] == iss_ch or data['channel'] == wind_ch:
                     # Each data packet of iss or anemometer contains wind
@@ -738,14 +740,16 @@ class Meteostick(object):
                         For now we use the more recent 'vue' formula for all
                         wind directions.
                         """
-                        dbg_parse(2, "wind_speed_raw: %03x, wind_dir_raw: 0x%03x" % (wind_speed_raw, wind_dir_raw))
+                        dbg_parse(2, "wind_speed_raw: %03x, wind_dir_raw: 0x%03x" %
+                                  (wind_speed_raw, wind_dir_raw))
                         data['wind_speed'] = wind_speed_raw * MPH_TO_MPS
                         # Vantage Pro and Pro2
                         wind_dir_pro = 9 + wind_dir_raw * 342.0 / 255.0
                         # Vantage Vue (maybe also for newer Pro 2)
                         wind_dir_vue = wind_dir_raw * 1.40625 + 0.3
                         data['wind_dir'] = wind_dir_pro
-                        dbg_parse(2, "wind_speed: %s, wind_dir_pro: %s, wind_dir_vue: %s" % (data['wind_speed'], wind_dir_pro, wind_dir_vue))
+                        dbg_parse(2, "wind_speed: %s, wind_dir_pro: %s, wind_dir_vue: %s" %
+                                  (data['wind_speed'], wind_dir_pro, wind_dir_vue))
 
                     # data from both iss sensors and extra sensors on
                     # Anemometer Transport Kit
@@ -755,16 +759,19 @@ class Meteostick(object):
                         supercap_volt_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
                         if supercap_volt_raw != 0x3FF:
                             data['supercap_volt'] = supercap_volt_raw / 100.0
-                            dbg_parse(2, "supercap_volt_raw: 0x%03x, value: %s" % (supercap_volt_raw, data['supercap_volt']))
+                            dbg_parse(2, "supercap_volt_raw: 0x%03x, value: %s" %
+                                      (supercap_volt_raw, data['supercap_volt']))
                     elif message_type == 3:
                         # unknown message type
-                        dbg_parse(1, "unknown message with type=0x03; pkt[3]: 0x%02x, pkt[4]: 0x%02x, pkt[5]: 0x%02x" % (pkt[3], pkt[4], pkt[5]))
+                        dbg_parse(1, "unknown message with type=0x03; pkt[3]: 0x%02x, pkt[4]: 0x%02x, pkt[5]: 0x%02x" %
+                                  (pkt[3], pkt[4], pkt[5]))
                     elif message_type == 4:
                         # uv max: 0xFFC0 (65472)
                         uv_raw = (pkt[3] * 256 + pkt[4]) & 0xFFC0
                         if pkt[3] != 0xFF:
                             data['uv'] = uv_raw / 50.0
-                            dbg_parse(2, "uv_raw: %04x, value: %s" % (uv_raw, data['uv']))
+                            dbg_parse(2, "uv_raw: %04x, value: %s" %
+                                      (uv_raw, data['uv']))
                     elif message_type == 5:
                         # rain rate
                         """ The published rain_rate formulas differ from each
@@ -773,7 +780,8 @@ class Meteostick(object):
                         3600 [s/h] / time_between_ticks [s] * 0.2 [mm] = xxx [mm/h]
                         """
                         time_between_ticks_raw = ((pkt[4] & 0x30) << 4) + pkt[3]  # typical: 64-1022
-                        dbg_parse(2, "time_between_ticks_raw: %03x (%s)" % (time_between_ticks_raw, time_between_ticks_raw))
+                        dbg_parse(2, "time_between_ticks_raw: %03x (%s)" %
+                                  (time_between_ticks_raw, time_between_ticks_raw))
                         if time_between_ticks_raw == 0x3FF:
                             # no rain
                             data['rain_rate'] = 0
@@ -782,13 +790,15 @@ class Meteostick(object):
                             if pkt[4] & 0x40 == 0:
                                 # heavy rain: typical value: 64/16 - 1020/16 = 4 - 63.8 (180.0 - 11.1 mm/h)
                                 time_between_ticks = time_between_ticks_raw / 16
-                                data['rain_rate'] = 3600 / time_between_ticks * rain_per_tip #  mm/h
-                                dbg_parse(2, "heavy_rain: %s mm/h, time_between_ticks: %s s" % (data['rain_rate'], time_between_ticks))
+                                data['rain_rate'] = 3600 / time_between_ticks * rain_per_tip # mm/h
+                                dbg_parse(2, "heavy_rain: %s mm/h, time_between_ticks: %s s" %
+                                          (data['rain_rate'], time_between_ticks))
                             else:
                                 # light rain:  typical value: 64 - 1022 (11.1 - 0.8 mm/h)
                                 time_between_ticks = time_between_ticks_raw
-                                data['rain_rate'] = 3600 / time_between_ticks * rain_per_tip #  mm/h
-                                dbg_parse(2, "heavy_rain: %s mm/h, time_between_ticks: %s s" % (data['rain_rate'], time_between_ticks))
+                                data['rain_rate'] = 3600 / time_between_ticks * rain_per_tip # mm/h
+                                dbg_parse(2, "heavy_rain: %s mm/h, time_between_ticks: %s s" %
+                                          (data['rain_rate'], time_between_ticks))
                     elif message_type == 6:
                         # solar radiation
                         sr_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
@@ -813,7 +823,7 @@ class Meteostick(object):
                         gust_raw = pkt[3]
                         gust_index_raw = pkt[5] >> 4
                         if not(gust_raw == 0 and gust_index_raw == 0):
-                            dbg_parse(2, "gust_raw: %s, gust_index_raw: %s; don't store yet" % (gust_raw, gust_index_raw))
+                            dbg_parse(2, "gust_raw: %s, gust_index_raw: %s" % (gust_raw, gust_index_raw))
                             # don't store the 10-min gust data
                     elif message_type == 0xA:
                         # humidity
@@ -862,11 +872,12 @@ class Meteostick(object):
                                 #lh soil_moisture = calculate_soil_moisture(
                                 #lh     leaf_soil_potential_raw, leaf_soil_temp)
                                 soil_moisture, R = calculate_soil_moisture(
-                                    leaf_soil_potential_raw, leaf_soil_temp) #lh TODO teporary get R back
+                                    leaf_soil_potential_raw, leaf_soil_temp) # lh TODO teporary get R back
                                 data['soil_moisture_%s' % sensor_num] = soil_moisture
-                                data['soil_moisture_3'] = R #lh TODO temporary store resistance for evaluation
+                                data['soil_moisture_3'] = R # lh TODO temporary store resistance for evaluation
                                 # Sample data for regression
-                                dbg_parse(2, "S_M_R %s S_T_R %s S_T %s" % (leaf_soil_potential_raw, leaf_soil_temp_raw, leaf_soil_temp))
+                                dbg_parse(2, "S_M_R %s S_T_R %s S_T %s" %
+                                          (leaf_soil_potential_raw, leaf_soil_temp_raw, leaf_soil_temp))
 
                         elif data_subtype == 2:
                             # leaf wetness
@@ -882,9 +893,10 @@ class Meteostick(object):
                                     data['leaf_wetness_%s' % sensor_num] = leaf_wetness
 
                                     #lh TODO put raw values in temporary tag soil_temp_3 to view the graph
-                                    data['soil_temp_3'] =  leaf_soil_potential_raw
+                                    data['soil_temp_3'] = leaf_soil_potential_raw
                                     # Sample data for regression
-                                    dbg_parse(2, "L_W_R %s L_T_R %s L_T %s" % (leaf_soil_potential_raw, leaf_soil_temp_raw, leaf_soil_temp))
+                                    dbg_parse(2, "L_W_R %s L_T_R %s L_T %s" %
+                                              (leaf_soil_potential_raw, leaf_soil_temp_raw, leaf_soil_temp))
 
                         else:
                             logerr("unknown subtype '%s' in '%s'" % (data_subtype, raw))
