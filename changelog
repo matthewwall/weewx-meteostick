@@ -1,3 +1,11 @@
+0.34 06may2016
+* default to 'raw' format not 'machine' format
+* rf stats are recorded only if debug_rf is enabled
+* push parameters down to meteostick class
+* keep wx calculations out of the driver and hardware code
+* incorporated luc's transitional soil calculations
+* rain_rate is now in loop packets, but intentionally not in the sensor map
+
 0.33 29apr2016
 * default to raw format
 
