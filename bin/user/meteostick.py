@@ -251,7 +251,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         self.last_rain_count = None
         self._init_rf_stats()
 
-        self.station = Meteostick(stn_dict)
+        self.station = Meteostick(**stn_dict)
         self.station.open()
         self.station.configure()
 
