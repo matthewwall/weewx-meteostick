@@ -1,3 +1,14 @@
+0.35 07may2016
+* Changed the way pct_good and pctgood are handled and calculated
+* Instead of METEOSTICK_CHANNEL we now use RAW_CHANNEL and MACHINE_CHANNEL
+* Changed the time when update_rf_summaries is run
+* Fixed self.output_format = fmt.lower()
+* Fixed missing 'else' in parse
+* Added battery low stati for output raw
+* Changed dbg_parse levels
+* Unused leaf wetness sensor has raw value 0x002 where most others have 0x3FF
+* Changed coding in leaf-soil section
+
 0.34 06may2016
 * default to 'raw' format not 'machine' format
 * rf stats are recorded only if debug_rf is enabled
