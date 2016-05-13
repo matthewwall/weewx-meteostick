@@ -1,3 +1,13 @@
+0.36 12may2016
+* Changed: logic for soil moisture
+* Changed: logic for leaf wetness
+* Fixed: formula for outtemp
+* Added: message examples
+* Fixed: handle TypeError when pctgood is None
+* Fixed: data of not-present leaf wetness sensors can have values 001 or 002
+* Changed: some logdbg messages into log_parse messages
+* Changed: some texts
+
 0.35 07may2016
 * Changed the way pct_good and pctgood are handled and calculated
 * Instead of METEOSTICK_CHANNEL we now use RAW_CHANNEL and MACHINE_CHANNEL
