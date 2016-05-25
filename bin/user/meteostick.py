@@ -45,7 +45,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.36'
+DRIVER_VERSION = '0.37lh'
 
 MPH_TO_MPS = 0.44704 # mph to m/s
 
@@ -89,120 +89,123 @@ def dbg_parse(verbosity, msg):
 
 # default temperature for soil moisture and leaf wetness sensors that
 # do not have a temperature sensor.
+# Also used to normalize raw values for a stanard temperature.
 DEFAULT_SOIL_TEMP = 24 # C
 
-raw_moist_table = [   0,  118,  282,  386,  476,  541,  585,  621,  643,  664,  687,  707, 1022]
-temp_corr_table = [-2.5, -2.5, -2.5, -2.5, -2.5, -2.5, -2.5, -2.5, -2.5, -2.5, -2.5, -2.5, -2.5]
+# Lookup table for soil_moisture_raw values to get a soil_moisture value based upon a linear formula
+# 24 may 2016 run4; norm_fact=0.018
+sm_norm_table = [100.5, 131.6, 231.9, 240.1, 283.6, 404.2, 487.7, 549.1, 612.0, 695.3, 733.9, 1024.0]
+sm_out_table  = [  0.0,   1.0,   9.0,  10.0,  15.0,  35.0,  55.0,  75.0, 100.0, 150.0, 200.0,  200,1]
+
+# Lookup table for leaf_wetness_raw values to get a leaf_wetness value based upon a linear formula
+# 25 may 2016
+lw_raw_max = 1021.0  # lw=0.0
+lw_raw_table = [847.0, 861.0, 899.0, 917.0, 946.0,  975.0, 1011.0, 1024.0]
+lw_out_table = [ 15.0,  14.0,   4.0,   3.0,   2.0,   1.0,   0.001,    0.0]
 
 def calculate_leaf_soil_temp(leaf_soil_temp_raw):
-    """ Decode the ls temperature then calculate the actual ls temperature
-    and the soil potential, using Davis' formulas.
+    """ Decode the raw leaf-soil temperature, then calculate the actual leaf-soil
+    temperature and the leaf_soil potential, using Davis' formulas.
     When the sensor is not populated, leaf_soil_temp_raw and
-    soil_potential_raw are set to their max values (0x3ff).
+    leaf_soil_potential_raw are set to their max values (0x3ff).
     see: https://github.com/cmatteri/CC1101-Weather-Receiver/wiki/Soil-Moisture-Station-Protocol
-    :param leaf_soil_temp_raw: temperature in degrees C
+    :param leaf_soil_temp_raw:
     """
 
     # Convert leaf_soil_temp_raw to a resistance (R) in kiloOhms
-    A = 18.81099
-    B = 0.0009988027
-    R = A / (1.0 / leaf_soil_temp_raw - B) / 1000 # k ohms
+    a = 18.81099
+    b = 0.0009988027
+    r = a / (1.0 / leaf_soil_temp_raw - b) / 1000 # k ohms
 
     # Steinhart-Hart parameters
-    S1 = 0.002783573
-    S2 = 0.0002509406
+    s1 = 0.002783573
+    s2 = 0.0002509406
     try:
-        leaf_soil_temp = 1 / (S1 + S2 * math.log(R)) - 273
-        dbg_parse(2, 'leaf_soil_temp thermistor resistance: %s kohm, leaf_soil_temp: %s' % (R, leaf_soil_temp))
+        leaf_soil_temp = 1 / (s1 + s2 * math.log(r)) - 273
+        dbg_parse(3, 'r (k ohm) %s leaf_soil_temp_raw %s leaf_soil_temp %s' %
+                  (r, leaf_soil_temp_raw, leaf_soil_temp))
         return leaf_soil_temp
     except ValueError, e:
-        logerr('soil/leaf temp failed for raw temp %s: %s' %
-               (leaf_soil_temp_raw, e))
-    return None
+        logerr('leaf_soil_temp failed for leaf_soil_temp_raw %s r (k ohm) %s error: %s' %
+               (leaf_soil_temp_raw, r, e))
+    return DEFAULT_SOIL_TEMP
 
-def calculate_soil_moisture(soil_potential_raw, soil_temp, leaf_soil_temp_raw):
-    # The calculation of the soil potential in cb is based upon empirical
-    # values in two lookup tables. Each step in the table represents a value
-    # of 20 cb.
-
-    if soil_temp is None:
-        soil_temp = DEFAULT_SOIL_TEMP
-
-    potential = 0.0  # preset soil moisture
-    raw_corr = 0.0  # preset raw correction
-    sp_raw_corr = 0.0  # preset raw correction
-
-    # we correct the soil moisture raw value for the temperature
-    # We have added a table with temperature correction factors per section
-    # First lookup the section for the soil_potential_raw value
-    for x in range(0, 13):
-        if soil_potential_raw < raw_moist_table[x]:
-            # Use the corresponding temperature correction factor
-            temp_corr_factor = temp_corr_table[x-1]  # raw correction per degree Celsius
-            # Determine the temperature correction for the soil moist raw value
-            raw_corr = (DEFAULT_SOIL_TEMP - soil_temp) * temp_corr_factor
-            # Determine the corrected soil potential raw value
-            sp_raw_corr = soil_potential_raw + raw_corr
-            break
-
-    # Now lookup sp_raw_corr value in table
-    for x in range(0, 13):
-        if sp_raw_corr < raw_moist_table[x]:
-            # determine the soil moisture value in cb
-            potential = (20.0 * (x-1)) \
-                        - (20.0 * (raw_moist_table[x] - sp_raw_corr) / (raw_moist_table[x] - raw_moist_table[x-1]))
-            dbg_parse(1, "soil_potential_raw: %s sp_raw_corr: %s x: %s sm: %s"
-                   % (soil_potential_raw, sp_raw_corr, x, potential))
-            break
-
-    # Clamp potentional between 0 and 200
-    potential = max(0, potential)
-    potential = min(200, potential)
-    return potential, raw_corr
-
-def calculate_leaf_wetness(leaf_potential_raw, leaf_temp):
-    """
-    :param leaf_potential_raw:
-    :param leaf_temp: temperature in degrees C
-    potential is in Davis' leaf-wet units (1-15)
+def calculate_soil_moisture(soil_moisture_raw, soil_temp):
+    """The calculation of the soil soil_moisture in cb is based upon empirical values
+    in two lookup tables. The values between two points can be interpolated as a straight line.
+    :param soil_temp: C
+    :param soil_moisture_raw: ~ 100 - 1022
     """
 
-    if leaf_temp is None:
-        leaf_temp = DEFAULT_SOIL_TEMP
+    # normalize raw value for standard temperature (DEFAULT_SOIL_TEMP)
+    norm_fact = 0.018  # temps are in C
+    sm_raw_norm = soil_moisture_raw * (1 + norm_fact * (soil_temp - DEFAULT_SOIL_TEMP))
 
-    if leaf_potential_raw < 847:
-        # 0 - 846
-        potential = 15
-    elif leaf_potential_raw < 1010:
-        # 847 - 1009
-        # formula based upon regression formula
-        # in 1: leaf_potential_raw (used range: 847 - 1010)
-        # in 2: leaf_temp (c)
-        # out:  potential (Vantage loop data)
-        # lh TODO regression parameters are not accurate enough
-        potential = 106.179014986425 -0.0977158641686967 * leaf_potential_raw -0.311507255127535 * leaf_temp
+    soil_moisture = 0.0 # preset soil moisture to minimum value
+    # lookup sm_raw_norm value in table
+    for x in range(0, 12):
+        if sm_raw_norm < sm_norm_table[x]:
+            if x == 0:
+                # 'pre zero' phase; soil_moisture = 0.0
+                dbg_parse(1, "soil_moisture_raw %s sm_raw_norm %s soil_moisture_temp %s sm %s < norm %s" %
+                          (soil_moisture_raw, sm_raw_norm, soil_temp, soil_moisture, sm_norm_table[x]))
+                break
+            else:
+                # determine the soil moisture value in cb
+                sm_per_sm =  (sm_out_table[x] - sm_out_table[x - 1]) / (sm_norm_table[x] - sm_norm_table[x - 1])
+                sm_offset = (sm_raw_norm - sm_norm_table[x - 1]) * sm_per_sm
+                soil_moisture = sm_out_table[x - 1] + sm_offset
+                dbg_parse(1, "soil_moisture_raw %s sm_raw_norm %s soil_moisture_temp %s sm %s out %s norm %s - %s" %
+                          (soil_moisture_raw, sm_raw_norm, soil_temp, soil_moisture,
+                           sm_out_table[x - 1], sm_norm_table[x - 1], sm_norm_table[x]))
+                break
+    return soil_moisture, sm_raw_norm
+
+def calculate_leaf_wetness(leaf_wetness_raw, leaf_temp):
+    """ Leaf_wetness is in Davis' leaf-wet units (0-15)
+    The calculation of the leaf wetness is based upon empirical values in two lookup tables.
+    The values between two points can be interpolated as a straight line.
+    :param leaf_temp: C
+    :param leaf_wetness_raw: ~ 847 - 1022
+    """
+
+    if leaf_wetness_raw >= lw_raw_max:
+        leaf_wetness = 0.0 # preset leaf wetness to minimum value
+        dbg_parse(1, "leaf_wetness_raw %s leaf_wetness_temp %s sm %s" %
+                  (leaf_wetness_raw, leaf_temp, leaf_wetness))
     else:
-        # 1010 -1022
-        potential = 0
+        leaf_wetness = 15  # preset lw to max value
+        # lookup leaf_wetness_raw value in table
+        for x in range(0, 8):
+            if leaf_wetness_raw < lw_raw_table[x]:
+                if x == 0:
+                    # 'pre zero' phase; leaf_wetness = 15.0
+                    dbg_parse(1, "leaf_wetness_raw %s leaf_wetness_temp %s leaf_wetness %s < raw %s" %
+                              (leaf_wetness_raw, leaf_temp, leaf_wetness, lw_raw_table[x]))
+                    break
+                else:
+                    # determine the soil moisture value in cb
+                    sm_per_sm =  (lw_out_table[x] - lw_out_table[x - 1]) / (lw_raw_table[x] - lw_raw_table[x - 1])
+                    sm_offset = (leaf_wetness_raw - lw_raw_table[x - 1]) * sm_per_sm
+                    leaf_wetness = lw_out_table[x - 1] + sm_offset
+                    dbg_parse(1, "lw_out_table[x - 1] %s sm_offset %s"% (lw_out_table[x - 1], sm_offset))
+                    dbg_parse(1, "leaf_wetness_raw %s leaf_wetness_temp %s leaf wetness %s out %s raw %s - %s" %
+                              (leaf_wetness_raw, leaf_temp, leaf_wetness,
+                               lw_out_table[x - 1], lw_raw_table[x - 1], lw_raw_table[x]))
+                    break
+    return leaf_wetness
 
-    dbg_parse(1, "leaf_wetness_raw: %s, leaf_wetness_temp: %s, leaf_wetness: %s"
-           % (leaf_potential_raw, leaf_temp, potential))
 
-    # Clamp potentional between 0 and 15
-    potential = max(0, potential)
-    potential = min(15, potential)
-    return potential
+RAW_CHANNEL = 0  # unused channel for the receiver stats in raw format
+MACHINE_CHANNEL = 9  # fake channel for the receiver stats in machine format
 
-
-RAW_CHANNEL = 0 # unused channel for the receiver stats in raw format
-MACHINE_CHANNEL = 9 # fake channel for the receiver stats in machine format
 
 class MeteostickDriver(weewx.drivers.AbstractDevice):
     NUM_CHAN = 10 # 8 channels, one fake channel (9), one unused channel (0)
     DEFAULT_RAIN_BUCKET_TYPE = 1
     DEFAULT_SENSOR_MAP = {
         'pressure': 'pressure',
-        'in_temp': 'inTemp',
+        'in_temp': 'inTemp',  # temperature inside meteostick
         'wind_speed': 'windSpeed',
         'wind_dir': 'windDir',
         'temperature': 'outTemp',
@@ -212,7 +215,6 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         'solar_radiation': 'radiation',
         'uv': 'UV',
         'pct_good': 'rxCheckPercent',
-        'solar_power': 'extraTemp3',
         'soil_temp_1': 'soilTemp1',
         'soil_temp_2': 'soilTemp2',
         'soil_temp_3': 'soilTemp3',
@@ -233,7 +235,9 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
         'bat_anemometer': 'windBatteryStatus',
         'bat_leaf_soil': 'rainBatteryStatus',
         'bat_th_1': 'outTempBatteryStatus',
-        'bat_th_2': 'inTempBatteryStatus'}
+        'bat_th_2': 'inTempBatteryStatus',
+        'solar_power': 'referenceVoltage',
+        'supercap_volt': 'supplyVoltage'}
 
     def __init__(self, **stn_dict):
         loginf('driver version is %s' % DRIVER_VERSION)
@@ -603,7 +607,7 @@ class Meteostick(object):
 
     @staticmethod
     def get_parts(raw):
-        dbg_parse(1, "readings: %s" % raw)
+        dbg_parse(2, "readings: %s" % raw)
         parts = raw.split(' ')
         dbg_parse(3, "parts: %s (%s)" % (parts, len(parts)))
         if len(parts) < 2:
@@ -636,8 +640,8 @@ class Meteostick(object):
     @staticmethod
     def parse_machine(raw, iss_ch, th1_ch, th2_ch):
         # parse the 'machine' format
-        #
-        # FIXME: put sample output here
+        # message example:
+        # W 3 0.00 261 -53 L
         data = dict()
         parts = Meteostick.get_parts(raw)
         n = len(parts)
@@ -753,6 +757,10 @@ class Meteostick(object):
             else:
                 logerr("B: not enough parts (%s) in '%s'" % (n, raw))
         elif parts[0] == 'I':
+            # raw Davis sensor message in 8 byte format incl header and additional info
+            # message example:
+            #       ---- raw message ----  rfs ts_last
+            # I 102 51 0 DB FF 73 0 11 41  -65 5249944 202
             raw_msg = [0] * 8
             for i in xrange(0, 8):
                 raw_msg[i] = chr(int(parts[i + 2], 16))
@@ -765,6 +773,8 @@ class Meteostick(object):
             data['rf_signal'] = int(parts[11])
             time_since_last = int(parts[12])
             data['rf_missed'] = ((time_since_last + 1250000) // 2500000) - 1
+            if data['rf_missed'] > 0:
+                dbg_parse(3, "channel %s missed %s" % (data['channel'], data['rf_missed']))
 
             if data['channel'] == iss_ch or data['channel'] == wind_ch:
                 if data['channel'] == iss_ch:
@@ -787,37 +797,36 @@ class Meteostick(object):
                     wind direction. This type has a much smaller dead band,
                     so there are two different formulas for calculating
                     the wind direction. To be able to select the right
-                    formula the Vantage type must be known. The more recent
-                    Vantage pro2 wind meters use the same sensor technique
-                    as the Vantage Vue. It is not known how Davis handles
-                    the values of the new wind meters in its protocol.
-
+                    formula the Vantage type must be known.
                     For now we use the traditional 'pro' formula for all
                     wind directions.
                     """
                     dbg_parse(2, "wind_speed_raw: %03x, wind_dir_raw: 0x%03x" %
                               (wind_speed_raw, wind_dir_raw))
                     data['wind_speed'] = wind_speed_raw * MPH_TO_MPS
-                    W_S = wind_speed_raw # mph
+                    ws = wind_speed_raw # mph
                     # Vantage Pro and Pro2
-                    wind_dir_pro = 9 + wind_dir_raw * 342.0 / 255.0
+                    wind_dir_pro = 9.0 + wind_dir_raw * 342.0 / 255.0
                     # Vantage Vue (maybe also for newer Pro 2)
                     wind_dir_vue = wind_dir_raw * 1.40625 + 0.3
                     data['wind_dir'] = wind_dir_pro
-                    dbg_parse(1, "WS %s WD %s WD_vue %s" %
-                              (W_S, wind_dir_pro, wind_dir_vue))
+                    dbg_parse(2, "WS %s WD %s WD_vue %s" %
+                              (ws, wind_dir_pro, wind_dir_vue))
 
                 # data from both iss sensors and extra sensors on
                 # Anemometer Transport Kit
                 message_type = (pkt[0] >> 4 & 0xF)
                 if message_type == 2:
                     # supercap voltage (Vue only) max: 0x3FF (1023)
-                    # message examples:
-                    # TODO
-                    # TODO (no sensor)
+                    # message example:
+                    # I 103 20 4 C3 D4 C1 81 89 EE  -77 2562520 -70
+                    """When the raw values are divided by 300 the maximum voltage
+                    of the super capacitor will be about 2.8 V. This is close to
+                    its maximum operating voltage of 2.7 V
+                    """
                     supercap_volt_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
                     if supercap_volt_raw != 0x3FF:
-                        data['supercap_volt'] = supercap_volt_raw / 100.0
+                        data['supercap_volt'] = supercap_volt_raw / 300.0
                         dbg_parse(2, "supercap_volt_raw: 0x%03x, value: %s" %
                                   (supercap_volt_raw, data['supercap_volt']))
                 elif message_type == 3:
@@ -829,12 +838,12 @@ class Meteostick(object):
                               "pkt[3]: 0x%02x, pkt[4]: 0x%02x, pkt[5]: 0x%02x"
                               % (pkt[3], pkt[4], pkt[5]))
                 elif message_type == 4:
-                    # uv max: 0xFFC0 (65472)
+                    # uv
                     # message examples:
-                    # TODO
-                    # TODO (no sensor)
-                    uv_raw = (pkt[3] * 256 + pkt[4]) & 0xFFC0
-                    if pkt[3] != 0xFF:
+                    # I 103 40 00 00 12 45 00 B5 2A  -78 2562444 -24
+                    # I 103 41 0 DE FF C3 0 A9 8D  -65 2624976 -38 (no sensor)
+                    uv_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
+                    if uv_raw != 0x3FF:
                         data['uv'] = uv_raw / 50.0
                         dbg_parse(2, "uv_raw: %04x, value: %s" %
                                   (uv_raw, data['uv']))
@@ -856,25 +865,25 @@ class Meteostick(object):
                     if time_between_tips_raw == 0x3FF:
                         # no rain
                         data['rain_rate'] = 0
-                        dbg_parse(2, "no_rain: %s mm/h" % data['rain_rate'])
+                        dbg_parse(3, "no_rain: %s mm/h" % data['rain_rate'])
                     else:
                         if pkt[4] & 0x40 == 0:
                             # heavy rain. typical value:
                             # 64/16 - 1020/16 = 4 - 63.8 (180.0 - 11.1 mm/h)
-                            time_between_tips = time_between_tips_raw / 16
-                            data['rain_rate'] = 3600 / time_between_tips * rain_per_tip # mm/h
-                            dbg_parse(2, "heavy_rain: %s mm/h, time_between_tips: %s s" %
+                            time_between_tips = time_between_tips_raw / 16.0  # convert to a real
+                            data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip # mm/h
+                            dbg_parse(1, "heavy_rain: %s mm/h, time_between_tips: %s s" %
                                       (data['rain_rate'], time_between_tips))
                         else:
                             # light rain. typical value:
                             # 64 - 1022 (11.1 - 0.8 mm/h)
-                            time_between_tips = time_between_tips_raw
-                            data['rain_rate'] = 3600 / time_between_tips * rain_per_tip # mm/h
-                            dbg_parse(2, "heavy_rain: %s mm/h, time_between_tips: %s s" %
+                            time_between_tips = time_between_tips_raw * 1.0  # convert to a real
+                            data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip # mm/h
+                            dbg_parse(1, "light_rain: %s mm/h, time_between_tips: %s s" %
                                       (data['rain_rate'], time_between_tips))
                 elif message_type == 6:
                     # solar radiation
-                    # examples
+                    # message examples
                     # I 104 61 0 DB 0 43 0 F4 3B  -66 2624972 121
                     # I 104 60 0 0 FF C5 0 79 DA  -77 2562444 137 (no sensor)
                     sr_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
@@ -882,13 +891,19 @@ class Meteostick(object):
                         data['solar_radiation'] = sr_raw * 1.757936
                         dbg_parse(2, "solar_radiation_raw: 0x%04x, value: %s" % (sr_raw, data['solar_radiation']))
                 elif message_type == 7:
-                    # solar cell output (Vue only)
-                    sco_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
-                    if sco_raw != 0xFFC0:
-                        data['solar_cell_output'] = sco_raw
-                        dbg_parse(2, "sco_raw: 0x%03x, value: %s" % (sco_raw, data['solar_cell_output']))
+                    # solar cell output / solar power (Vue only)
+                    # message example:
+                    # I 102 70 1 F5 CE 43 86 58 E2  -77 2562532 173
+                    """When the raw values are divided by 300 the voltage comes in
+                    the range of 2.8-3.3 V measured by the machine readable format
+                    """
+                    solar_power_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
+                    if solar_power_raw != 0x3FF:
+                        data['solar_power'] = solar_power_raw / 300.0
+                        dbg_parse(2, "solar_power_raw: 0x%03x, solar_power: %s" %
+                                  (solar_power_raw, data['solar_power']))
                 elif message_type == 8:
-                    # temperature
+                    # outside temperature
                     # message examples:
                     # I 103 80 0 0 33 8D 0 25 11  -78 2562444 -25
                     # I 104 81 0 DB FF C3 0 AB F8  -66 2624980 125 (no sensor)
@@ -896,7 +911,8 @@ class Meteostick(object):
                     if temp_f_raw != 0xFFC:
                         temp_f = temp_f_raw / 10.0
                         data['temperature'] = weewx.wxformulas.FtoC(temp_f) # C
-                        dbg_parse(2, "temp_f_raw: 0x%03x, temp_f: %s, temp_c: %s" % (temp_f_raw, temp_f, data['temperature']))
+                        dbg_parse(2, "temp_f_raw: 0x%03x, temp_f: %s, temp_c: %s"
+                                  % (temp_f_raw, temp_f, data['temperature']))
                 elif message_type == 9:
                     # 10-min average wind gust
                     # message examples:
@@ -905,7 +921,7 @@ class Meteostick(object):
                     gust_raw = pkt[3]  # mph
                     gust_index_raw = pkt[5] >> 4
                     if not(gust_raw == 0 and gust_index_raw == 0):
-                        dbg_parse(1, "W10 %s gust_index_raw %s" % (gust_raw, gust_index_raw))
+                        dbg_parse(2, "W10 %s gust_index_raw %s" % (gust_raw, gust_index_raw))
                     # don't store the 10-min gust data
                 elif message_type == 0xA:
                     # humidity
@@ -918,11 +934,12 @@ class Meteostick(object):
                         dbg_parse(2, "humidity_raw: 0x%03x, value: %s" % (humidity_raw, data['humidity']))
                 elif message_type == 0xC:
                     # unknown ATK message
-                    # example:
-                    # I 101 C1 0 DB 0 3 0 18 DF  -66 2624964 40
-                    unknown_atk_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
-                    if unknown_atk_raw != 0xFFC0:
-                        dbg_parse(2, "unknown_atk_raw: 0x%03x, value: %s" % (unknown_atk_raw, unknown_atk_raw))
+                    # message example:
+                    # I 101 C1 4 D0 0 1 0 E9 A4  -69 2624968 56
+                    # As we have seen after one day of received data
+                    # pkt[3] and pkt[5] are always zero; pckt[4] has values 0-3
+                    dbg_parse(3, "unknown_atk pkt[3] 0x%02x pkt[4] 0x%02x pkt[5] 0x%02x" %
+                              ((pkt[3]), (pkt[4]), (pkt[5])))
                 elif message_type == 0xE:
                     # rain
                     # message examples:
@@ -956,41 +973,37 @@ class Meteostick(object):
                         # message examples:
                         # I 102 F2 9 1A 55 C0 0 62 E6  -51 2687524 207
                         # I 104 F2 29 FF FF C0 C0 F1 EC  -52 2687408 124 (no sensor)
-                        if leaf_soil_temp_raw != 0x3FF:
+                        if pkt[3] != 0xFF:
                             leaf_soil_temp = calculate_leaf_soil_temp(leaf_soil_temp_raw)
-                            dbg_parse(3, "soil_temp_%s raw: 0x%03x (%s)" %
-                                     (sensor_num, leaf_soil_temp, leaf_soil_temp))
-                            data['soil_temp_%s' % sensor_num] = leaf_soil_temp  # C
-                        if leaf_soil_potential_raw != 0x3FF:
+                            dbg_parse(2, "soil_temp_%s raw: 0x%03x (%s)" %
+                                      (sensor_num, leaf_soil_temp, leaf_soil_temp))
+                            data['soil_temp_%s' % sensor_num] = leaf_soil_temp # C
+                        if pkt[2] != 0xFF:
                             # soil moisture
-                            soil_moisture, raw_corr = calculate_soil_moisture(
-                                leaf_soil_potential_raw, leaf_soil_temp, leaf_soil_temp_raw)
+                            soil_moisture, sm_raw_norm = calculate_soil_moisture(
+                                leaf_soil_potential_raw, leaf_soil_temp)
                             data['soil_moisture_%s' % sensor_num] = soil_moisture
-                            #lh TODO put raw values in temporary tag soil_moisture_2 to view the graph
-                            data['soil_moisture_2'] =  leaf_soil_potential_raw
-                            #lh TODO put raw correction in temporary tag soil_moisture_3 to view the graph
-                            data['soil_moisture_3'] =  raw_corr
-                            # Sample data for regression
-                            dbg_parse(1, "S_M_R %s R_C %s S_T_R %s S_T %s S_M %s" % (leaf_soil_potential_raw, raw_corr, leaf_soil_temp_raw, leaf_soil_temp, soil_moisture))
+                            # TODO raw values in temporary tag soil_moisture_2 to view the graph
+                            data['soil_moisture_2'] = leaf_soil_potential_raw
+                            # TODO raw normalized in temporary tag soil_moisture_3 to view the graph
+                            data['soil_moisture_3'] = sm_raw_norm
 
                     elif data_subtype == 2:
                         # leaf wetness
                         # message examples:
                         # I 100 F2 A D4 55 80 0 90 6  -53 2687516 -121
-                        # I 101 F2 2A 0 FF 40 C0 4F 5  -52 2687404 43 (no sensor, variant 1)
-                        # I 100 F2 2A 0 FF 80 C0 59 51  -53 2687416 -124 (no sensor, variant 2)
-                        if leaf_soil_temp_raw != 0x3FF:
+                        # I 101 F2 2A 0 FF 40 C0 4F 5  -52 2687404 43 (no sensor)
+                        if pkt[3] != 0xFF:
                             leaf_soil_temp = calculate_leaf_soil_temp(leaf_soil_temp_raw)
-                            dbg_parse(3, "leaf_temp_%s raw: 0x%03x (%s)" % (sensor_num, leaf_soil_temp, leaf_soil_temp))
+                            dbg_parse(2, "leaf_temp_%s raw: 0x%03x (%s)" %
+                                      (sensor_num, leaf_soil_temp, leaf_soil_temp))
                             data['leaf_temp_%s' % sensor_num] = leaf_soil_temp # C
-                        if not(leaf_soil_potential_raw == 0x002 or leaf_soil_potential_raw == 0x001) :  # (00 80 and 00 40)
+                        if pkt[2] != 0:
                             leaf_wetness = calculate_leaf_wetness(
                                 leaf_soil_potential_raw, leaf_soil_temp)
                             data['leaf_wetness_%s' % sensor_num] = leaf_wetness
-                            #lh TODO put raw values in temporary tag soil_moisture_4 to view the graph
-                            data['soil_moisture_4'] =  leaf_soil_potential_raw
-                            # Sample data for regression
-                            dbg_parse(1, "L_W_R %s L_T_R %s L_T %s L_W %s" % (leaf_soil_potential_raw, leaf_soil_temp_raw, leaf_soil_temp, leaf_wetness))
+                            # TODO raw values in temporary tag soil_moisture_4 to view the graph
+                            data['soil_moisture_4'] = leaf_soil_potential_raw
 
                     else:
                         logerr("unknown subtype '%s' in '%s'" % (data_subtype, raw))
@@ -1005,7 +1018,7 @@ class Meteostick(object):
                 else:
                     data['bat_th_2'] = battery_low
                 dbg_parse(2, "data from thermo/hygro channel: %s, raw message: %s" % (data['channel'], raw))
-                # TODO find out message protocol thermo/hygro station
+                # TODO find out message protocol of thermo/hygro station
 
             else:
                 logerr("unknown station with channel: %s, raw message: %s" % (data['channel'], raw))

@@ -1,3 +1,18 @@
+0.37 25may2016
+* Changed: calculate_soil_moisture
+* Changed: calculate_leaf_wetness
+* Changed: tag for solar_power.
+* Added: tag for supercap_volt.
+* Fixed: formula for supercap voltage raw value (Vue only).
+* Fixed: formula for uv raw value
+* Fixed: typo with light rain
+* Fixed: accuracy rain rate formula's
+* Fixed: formula for solar cell output raw value
+* Changed: explanation of unknown ATK message (0xC)
+* Changed: the value of not connected soil temperature sensors
+* Changed: the value of not connected soil moisture sensors
+* Changed: the value of not connected leaf wetness sensors
+
 0.36 12may2016
 * Changed: logic for soil moisture
 * Changed: logic for leaf wetness
