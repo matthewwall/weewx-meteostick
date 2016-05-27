@@ -45,7 +45,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.37lh'
+DRIVER_VERSION = '0.37'
 
 MPH_TO_MPS = 0.44704 # mph to m/s
 
