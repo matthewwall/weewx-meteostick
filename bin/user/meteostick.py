@@ -36,6 +36,7 @@ seems to result in higher quality readings, so it is the default.
 from __future__ import with_statement
 import math
 import serial
+import string
 import syslog
 import time
 
@@ -553,7 +554,7 @@ class Meteostick(object):
                 c = self.serial_port.read(1)
                 if c == '?':
                     ready = True
-                else:
+                elif c in string.printable:
                     response += c
         loginf("reset: %s" % response.split('\n')[0])
         dbg_serial(2, "full response to reset: %s" % response)
@@ -757,7 +758,8 @@ class Meteostick(object):
             else:
                 logerr("B: not enough parts (%s) in '%s'" % (n, raw))
         elif parts[0] == 'I':
-            # raw Davis sensor message in 8 byte format incl header and additional info
+            # raw Davis sensor message in 8 byte format incl header and
+            # additional info
             # message example:
             #       ---- raw message ----  rfs ts_last
             # I 102 51 0 DB FF 73 0 11 41  -65 5249944 202
@@ -774,7 +776,8 @@ class Meteostick(object):
             time_since_last = int(parts[12])
             data['rf_missed'] = ((time_since_last + 1250000) // 2500000) - 1
             if data['rf_missed'] > 0:
-                dbg_parse(3, "channel %s missed %s" % (data['channel'], data['rf_missed']))
+                dbg_parse(3, "channel %s missed %s" %
+                          (data['channel'], data['rf_missed']))
 
             if data['channel'] == iss_ch or data['channel'] == wind_ch:
                 if data['channel'] == iss_ch:
@@ -801,7 +804,7 @@ class Meteostick(object):
                     For now we use the traditional 'pro' formula for all
                     wind directions.
                     """
-                    dbg_parse(2, "wind_speed_raw: %03x, wind_dir_raw: 0x%03x" %
+                    dbg_parse(2, "wind_speed_raw=%03x wind_dir_raw=0x%03x" %
                               (wind_speed_raw, wind_dir_raw))
                     data['wind_speed'] = wind_speed_raw * MPH_TO_MPS
                     ws = wind_speed_raw # mph
@@ -810,7 +813,7 @@ class Meteostick(object):
                     # Vantage Vue (maybe also for newer Pro 2)
                     wind_dir_vue = wind_dir_raw * 1.40625 + 0.3
                     data['wind_dir'] = wind_dir_pro
-                    dbg_parse(2, "WS %s WD %s WD_vue %s" %
+                    dbg_parse(2, "WS=%s WD=%s WD_vue=%s" %
                               (ws, wind_dir_pro, wind_dir_vue))
 
                 # data from both iss sensors and extra sensors on
@@ -820,14 +823,14 @@ class Meteostick(object):
                     # supercap voltage (Vue only) max: 0x3FF (1023)
                     # message example:
                     # I 103 20 4 C3 D4 C1 81 89 EE  -77 2562520 -70
-                    """When the raw values are divided by 300 the maximum voltage
-                    of the super capacitor will be about 2.8 V. This is close to
-                    its maximum operating voltage of 2.7 V
+                    """When the raw values are divided by 300 the maximum
+                    voltage of the super capacitor will be about 2.8 V. This
+                    is close to its maximum operating voltage of 2.7 V
                     """
                     supercap_volt_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
                     if supercap_volt_raw != 0x3FF:
                         data['supercap_volt'] = supercap_volt_raw / 300.0
-                        dbg_parse(2, "supercap_volt_raw: 0x%03x, value: %s" %
+                        dbg_parse(2, "supercap_volt_raw=0x%03x value=%s" %
                                   (supercap_volt_raw, data['supercap_volt']))
                 elif message_type == 3:
                     # unknown message type
@@ -835,7 +838,7 @@ class Meteostick(object):
                     # TODO
                     # TODO (no sensor)
                     dbg_parse(1, "unknown message with type=0x03; "
-                              "pkt[3]: 0x%02x, pkt[4]: 0x%02x, pkt[5]: 0x%02x"
+                              "pkt[3]=0x%02x pkt[4]=0x%02x pkt[5]=0x%02x"
                               % (pkt[3], pkt[4], pkt[5]))
                 elif message_type == 4:
                     # uv
@@ -845,7 +848,7 @@ class Meteostick(object):
                     uv_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
                     if uv_raw != 0x3FF:
                         data['uv'] = uv_raw / 50.0
-                        dbg_parse(2, "uv_raw: %04x, value: %s" %
+                        dbg_parse(2, "uv_raw=%04x value=%s" %
                                   (uv_raw, data['uv']))
                 elif message_type == 5:
                     # rain rate
@@ -860,26 +863,26 @@ class Meteostick(object):
                     3600 [s/h] / time_between_tips [s] * 0.2 [mm] = xxx [mm/h]
                     """
                     time_between_tips_raw = ((pkt[4] & 0x30) << 4) + pkt[3]  # typical: 64-1022
-                    dbg_parse(2, "time_between_tips_raw: %03x (%s)" %
+                    dbg_parse(2, "time_between_tips_raw=%03x (%s)" %
                               (time_between_tips_raw, time_between_tips_raw))
                     if time_between_tips_raw == 0x3FF:
                         # no rain
                         data['rain_rate'] = 0
-                        dbg_parse(3, "no_rain: %s mm/h" % data['rain_rate'])
+                        dbg_parse(3, "no_rain=%s mm/h" % data['rain_rate'])
                     else:
                         if pkt[4] & 0x40 == 0:
                             # heavy rain. typical value:
                             # 64/16 - 1020/16 = 4 - 63.8 (180.0 - 11.1 mm/h)
                             time_between_tips = time_between_tips_raw / 16.0  # convert to a real
                             data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip # mm/h
-                            dbg_parse(1, "heavy_rain: %s mm/h, time_between_tips: %s s" %
+                            dbg_parse(1, "heavy_rain=%s mm/h, time_between_tips=%s s" %
                                       (data['rain_rate'], time_between_tips))
                         else:
                             # light rain. typical value:
                             # 64 - 1022 (11.1 - 0.8 mm/h)
                             time_between_tips = time_between_tips_raw * 1.0  # convert to a real
                             data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip # mm/h
-                            dbg_parse(1, "light_rain: %s mm/h, time_between_tips: %s s" %
+                            dbg_parse(1, "light_rain=%s mm/h, time_between_tips=%s s" %
                                       (data['rain_rate'], time_between_tips))
                 elif message_type == 6:
                     # solar radiation
@@ -889,19 +892,21 @@ class Meteostick(object):
                     sr_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
                     if sr_raw != 0x3FF:
                         data['solar_radiation'] = sr_raw * 1.757936
-                        dbg_parse(2, "solar_radiation_raw: 0x%04x, value: %s" % (sr_raw, data['solar_radiation']))
+                        dbg_parse(2, "solar_radiation_raw=0x%04x value=%s"
+                                  % (sr_raw, data['solar_radiation']))
                 elif message_type == 7:
                     # solar cell output / solar power (Vue only)
                     # message example:
                     # I 102 70 1 F5 CE 43 86 58 E2  -77 2562532 173
-                    """When the raw values are divided by 300 the voltage comes in
-                    the range of 2.8-3.3 V measured by the machine readable format
+                    """When the raw values are divided by 300 the voltage comes
+                    in the range of 2.8-3.3 V measured by the machine readable
+                    format
                     """
                     solar_power_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
                     if solar_power_raw != 0x3FF:
                         data['solar_power'] = solar_power_raw / 300.0
-                        dbg_parse(2, "solar_power_raw: 0x%03x, solar_power: %s" %
-                                  (solar_power_raw, data['solar_power']))
+                        dbg_parse(2, "solar_power_raw=0x%03x solar_power=%s"
+                                  % (solar_power_raw, data['solar_power']))
                 elif message_type == 8:
                     # outside temperature
                     # message examples:
@@ -911,7 +916,7 @@ class Meteostick(object):
                     if temp_f_raw != 0xFFC:
                         temp_f = temp_f_raw / 10.0
                         data['temperature'] = weewx.wxformulas.FtoC(temp_f) # C
-                        dbg_parse(2, "temp_f_raw: 0x%03x, temp_f: %s, temp_c: %s"
+                        dbg_parse(2, "temp_f_raw=0x%03x temp_f=%s temp_c=%s"
                                   % (temp_f_raw, temp_f, data['temperature']))
                 elif message_type == 9:
                     # 10-min average wind gust
@@ -921,7 +926,8 @@ class Meteostick(object):
                     gust_raw = pkt[3]  # mph
                     gust_index_raw = pkt[5] >> 4
                     if not(gust_raw == 0 and gust_index_raw == 0):
-                        dbg_parse(2, "W10 %s gust_index_raw %s" % (gust_raw, gust_index_raw))
+                        dbg_parse(2, "W10=%s gust_index_raw=%s" %
+                                  (gust_raw, gust_index_raw))
                     # don't store the 10-min gust data
                 elif message_type == 0xA:
                     # humidity
@@ -931,15 +937,16 @@ class Meteostick(object):
                     humidity_raw = ((pkt[4] >> 4) << 8) + pkt[3]
                     if humidity_raw != 0:
                         data['humidity'] = humidity_raw / 10.0
-                        dbg_parse(2, "humidity_raw: 0x%03x, value: %s" % (humidity_raw, data['humidity']))
+                        dbg_parse(2, "humidity_raw=0x%03x value=%s" %
+                                  (humidity_raw, data['humidity']))
                 elif message_type == 0xC:
                     # unknown ATK message
                     # message example:
                     # I 101 C1 4 D0 0 1 0 E9 A4  -69 2624968 56
                     # As we have seen after one day of received data
                     # pkt[3] and pkt[5] are always zero; pckt[4] has values 0-3
-                    dbg_parse(3, "unknown_atk pkt[3] 0x%02x pkt[4] 0x%02x pkt[5] 0x%02x" %
-                              ((pkt[3]), (pkt[4]), (pkt[5])))
+                    dbg_parse(3, "unknown_atk pkt[3]=0x%02x pkt[4]=0x%02x pkt[5]=0x%02x" %
+                              (pkt[3], pkt[4], pkt[5]))
                 elif message_type == 0xE:
                     # rain
                     # message examples:
@@ -953,7 +960,8 @@ class Meteostick(object):
                     if rain_count_raw != 0x80:
                         rain_count = rain_count_raw & 0x7F  # skip high bit
                         data['rain_count'] = rain_count
-                        dbg_parse(2, "rain_count_raw: 0x%02x, value: %s" % (rain_count_raw, rain_count))
+                        dbg_parse(2, "rain_count_raw=0x%02x value=%s" %
+                                  (rain_count_raw, rain_count))
                 else:
                     # unknown message type
                     logerr("unknown message type 0x%01x" % message_type)
@@ -975,7 +983,7 @@ class Meteostick(object):
                         # I 104 F2 29 FF FF C0 C0 F1 EC  -52 2687408 124 (no sensor)
                         if pkt[3] != 0xFF:
                             leaf_soil_temp = calculate_leaf_soil_temp(leaf_soil_temp_raw)
-                            dbg_parse(2, "soil_temp_%s raw: 0x%03x (%s)" %
+                            dbg_parse(2, "soil_temp_%s_raw=0x%03x (%s)" %
                                       (sensor_num, leaf_soil_temp, leaf_soil_temp))
                             data['soil_temp_%s' % sensor_num] = leaf_soil_temp # C
                         if pkt[2] != 0xFF:
@@ -995,14 +1003,15 @@ class Meteostick(object):
                         # I 101 F2 2A 0 FF 40 C0 4F 5  -52 2687404 43 (no sensor)
                         if pkt[3] != 0xFF:
                             leaf_soil_temp = calculate_leaf_soil_temp(leaf_soil_temp_raw)
-                            dbg_parse(2, "leaf_temp_%s raw: 0x%03x (%s)" %
+                            dbg_parse(2, "leaf_temp_%s_raw=0x%03x (%s)" %
                                       (sensor_num, leaf_soil_temp, leaf_soil_temp))
                             data['leaf_temp_%s' % sensor_num] = leaf_soil_temp # C
                         if pkt[2] != 0:
                             leaf_wetness = calculate_leaf_wetness(
                                 leaf_soil_potential_raw, leaf_soil_temp)
                             data['leaf_wetness_%s' % sensor_num] = leaf_wetness
-                            # TODO raw values in temporary tag soil_moisture_4 to view the graph
+                            # TODO raw values in temporary tag soil_moisture_4
+                            # to view the graph
                             data['soil_moisture_4'] = leaf_soil_potential_raw
 
                     else:
@@ -1021,7 +1030,8 @@ class Meteostick(object):
                 # TODO find out message protocol of thermo/hygro station
 
             else:
-                logerr("unknown station with channel: %s, raw message: %s" % (data['channel'], raw))
+                logerr("unknown station with channel: %s, raw message: %s" %
+                       (data['channel'], raw))
         elif parts[0] in '#':
             loginf("%s" % raw)
         else:
