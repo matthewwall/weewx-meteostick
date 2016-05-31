@@ -719,7 +719,8 @@ class Meteostick(object):
                     rain_count = int(parts[2])
                     if 0 <= rain_count < 128:
                         data['rain_count'] = rain_count  # 0-127
-                    else:
+                    elif rain_count > 128:
+                        # rain_count == 128 is no sensor
                         loginf("ignoring invalid rain %s on channel %s" %
                                (rain_count, data['channel']))
                 elif parts[0] == 'S':
