@@ -46,7 +46,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.37'
+DRIVER_VERSION = '0.38'
 
 MPH_TO_MPS = 0.44704 # mph to m/s
 
@@ -267,6 +267,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice):
 
         self.station = Meteostick(**stn_dict)
         self.station.open()
+        self.station.reset()
         self.station.configure()
 
     def closePort(self):
@@ -537,8 +538,9 @@ class Meteostick(object):
             logerr(msg)
             raise weewx.RetriesExceeded(msg)
 
-    def reset(self):
+    def reset(self, max_wait=30):
         """Reset the device, leaving it in a state that we can talk to it."""
+        loginf("establish communication with the meteostick")
 
         # flush any previous data in the input buffer
         self.serial_port.flushInput()
@@ -546,6 +548,7 @@ class Meteostick(object):
         # Send a reset command
         self.serial_port.write('r\n')
         # Wait until we see the ? character
+        start_ts = time.time()
         ready = False
         response = ''
         while not ready:
@@ -556,6 +559,8 @@ class Meteostick(object):
                     ready = True
                 elif c in string.printable:
                     response += c
+            if time.time() - start_ts > max_wait:
+                raise weewx.WakeupError("No 'ready' response from meteostick after %s seconds" % max_wait)
         loginf("reset: %s" % response.split('\n')[0])
         dbg_serial(2, "full response to reset: %s" % response)
         # Discard any serial input from the device
@@ -566,9 +571,6 @@ class Meteostick(object):
     def configure(self):
         """Configure the device to send data continuously."""
         loginf("configure meteostick to logger mode")
-
-        # Put device into state that we can talk to it reliably
-        self.reset()
 
         # Show default settings (they might change with a new firmware version)
         self.send_command('?')

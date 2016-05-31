@@ -1,3 +1,6 @@
+0.38 31may2016
+* make the initialization process more robust
+
 0.37 25may2016
 * Changed: calculate_soil_moisture
 * Changed: calculate_leaf_wetness
