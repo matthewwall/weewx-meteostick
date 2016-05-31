@@ -46,7 +46,7 @@ import weewx.wxformulas
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.38'
+DRIVER_VERSION = '0.39lh'
 
 MPH_TO_MPS = 0.44704 # mph to m/s
 
@@ -93,16 +93,19 @@ def dbg_parse(verbosity, msg):
 # Also used to normalize raw values for a stanard temperature.
 DEFAULT_SOIL_TEMP = 24 # C
 
+RAW = 0  # indices of table with raw values
+POT = 1  # indices of table with potentials
+
 # Lookup table for soil_moisture_raw values to get a soil_moisture value based upon a linear formula
-# 24 may 2016 run4; norm_fact=0.018
-sm_norm_table = [100.5, 131.6, 231.9, 240.1, 283.6, 404.2, 487.7, 549.1, 612.0, 695.3, 733.9, 1024.0]
-sm_out_table  = [  0.0,   1.0,   9.0,  10.0,  15.0,  35.0,  55.0,  75.0, 100.0, 150.0, 200.0,  200,1]
+# Correction factor = 0.009
+SM_MAP = {RAW: ( 99.2, 129.8, 216.9, 225.6, 265.3, 389.6, 474.4, 534.1, 592.5, 673.1, 720.4),
+          POT: (  0.0,   1.0,   9.0,  10.0,  15.0,  35.0,  55.0,  75.0, 100.0, 150.0, 200.0)}
 
 # Lookup table for leaf_wetness_raw values to get a leaf_wetness value based upon a linear formula
-# 25 may 2016
-lw_raw_max = 1021.0  # lw=0.0
-lw_raw_table = [847.0, 861.0, 899.0, 917.0, 946.0,  975.0, 1011.0, 1024.0]
-lw_out_table = [ 15.0,  14.0,   4.0,   3.0,   2.0,   1.0,   0.001,    0.0]
+# Correction factor = 0.000
+LW_MAP = {RAW: (860.0, 865.0, 909.0, 937.0, 964.0,  991.0, 1013.0),
+          POT: ( 15.0,  14.0,   4.0,   3.0,   2.0,   1.0,     0.0)}
+
 
 def calculate_leaf_soil_temp(leaf_soil_temp_raw):
     """ Decode the raw leaf-soil temperature, then calculate the actual leaf-soil
@@ -110,7 +113,7 @@ def calculate_leaf_soil_temp(leaf_soil_temp_raw):
     When the sensor is not populated, leaf_soil_temp_raw and
     leaf_soil_potential_raw are set to their max values (0x3ff).
     see: https://github.com/cmatteri/CC1101-Weather-Receiver/wiki/Soil-Moisture-Station-Protocol
-    :param leaf_soil_temp_raw:
+    :param leaf_soil_temp_raw: raw value of sensor temp of both leaf wetness and soil moisture sensors.
     """
 
     # Convert leaf_soil_temp_raw to a resistance (R) in kiloOhms
@@ -131,70 +134,47 @@ def calculate_leaf_soil_temp(leaf_soil_temp_raw):
                (leaf_soil_temp_raw, r, e))
     return DEFAULT_SOIL_TEMP
 
-def calculate_soil_moisture(soil_moisture_raw, soil_temp):
-    """The calculation of the soil soil_moisture in cb is based upon empirical values
-    in two lookup tables. The values between two points can be interpolated as a straight line.
-    :param soil_temp: C
-    :param soil_moisture_raw: ~ 100 - 1022
+def lookup_potential(sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
+    """Look up potential based upon a normalized raw value (i.e. temp corrected for DEFAULT_SOIL_TEMP)
+    and a linear function between two points in the lookup table.
+    :param lookup: a table with both sensor_raw_norm values and corresponding potential values;
+    the table is composed for a specific norm-factor.
+    :param sensor_temp: sensor temp in C
+    :param sensor_raw: sensor raw potential value
+    :param norm_fact: temp correction factor for normalizing sensor-raw values
+    :param sensor_name: string used in debug messages
     """
 
     # normalize raw value for standard temperature (DEFAULT_SOIL_TEMP)
-    norm_fact = 0.018  # temps are in C
-    sm_raw_norm = soil_moisture_raw * (1 + norm_fact * (soil_temp - DEFAULT_SOIL_TEMP))
+    sensor_raw_norm = sensor_raw * (1 + norm_fact * (sensor_temp - DEFAULT_SOIL_TEMP))
 
-    soil_moisture = 0.0 # preset soil moisture to minimum value
-    # lookup sm_raw_norm value in table
-    for x in range(0, 12):
-        if sm_raw_norm < sm_norm_table[x]:
-            if x == 0:
-                # 'pre zero' phase; soil_moisture = 0.0
-                dbg_parse(1, "soil_moisture_raw %s sm_raw_norm %s soil_moisture_temp %s sm %s < norm %s" %
-                          (soil_moisture_raw, sm_raw_norm, soil_temp, soil_moisture, sm_norm_table[x]))
-                break
-            else:
-                # determine the soil moisture value in cb
-                sm_per_sm =  (sm_out_table[x] - sm_out_table[x - 1]) / (sm_norm_table[x] - sm_norm_table[x - 1])
-                sm_offset = (sm_raw_norm - sm_norm_table[x - 1]) * sm_per_sm
-                soil_moisture = sm_out_table[x - 1] + sm_offset
-                dbg_parse(1, "soil_moisture_raw %s sm_raw_norm %s soil_moisture_temp %s sm %s out %s norm %s - %s" %
-                          (soil_moisture_raw, sm_raw_norm, soil_temp, soil_moisture,
-                           sm_out_table[x - 1], sm_norm_table[x - 1], sm_norm_table[x]))
-                break
-    return soil_moisture, sm_raw_norm
-
-def calculate_leaf_wetness(leaf_wetness_raw, leaf_temp):
-    """ Leaf_wetness is in Davis' leaf-wet units (0-15)
-    The calculation of the leaf wetness is based upon empirical values in two lookup tables.
-    The values between two points can be interpolated as a straight line.
-    :param leaf_temp: C
-    :param leaf_wetness_raw: ~ 847 - 1022
-    """
-
-    if leaf_wetness_raw >= lw_raw_max:
-        leaf_wetness = 0.0 # preset leaf wetness to minimum value
-        dbg_parse(1, "leaf_wetness_raw %s leaf_wetness_temp %s sm %s" %
-                  (leaf_wetness_raw, leaf_temp, leaf_wetness))
+    numcols = len(lookup[RAW])
+    if sensor_raw_norm >= lookup[RAW][numcols-1]:
+        potential = lookup[POT][numcols-1] # preset potential to last value
+        dbg_parse(1, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s >= RAW=%s" %
+                  (sensor_name, sensor_temp, norm_fact, sensor_raw, sensor_raw_norm, potential,
+                   lookup[RAW][numcols-1]))
     else:
-        leaf_wetness = 15  # preset lw to max value
-        # lookup leaf_wetness_raw value in table
-        for x in range(0, 8):
-            if leaf_wetness_raw < lw_raw_table[x]:
+        potential = lookup[POT][0] # preset potential to first value
+        # lookup sensor_raw_norm value in table
+        for x in range(0, numcols):
+            if sensor_raw_norm < lookup[RAW][x]:
                 if x == 0:
-                    # 'pre zero' phase; leaf_wetness = 15.0
-                    dbg_parse(1, "leaf_wetness_raw %s leaf_wetness_temp %s leaf_wetness %s < raw %s" %
-                              (leaf_wetness_raw, leaf_temp, leaf_wetness, lw_raw_table[x]))
+                    # 'pre zero' phase; potential = first value
+                    dbg_parse(1, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s < RAW=%s" %
+                              (sensor_name, sensor_temp, norm_fact, sensor_raw, sensor_raw_norm, potential,
+                               lookup[RAW][0]))
                     break
                 else:
-                    # determine the soil moisture value in cb
-                    sm_per_sm =  (lw_out_table[x] - lw_out_table[x - 1]) / (lw_raw_table[x] - lw_raw_table[x - 1])
-                    sm_offset = (leaf_wetness_raw - lw_raw_table[x - 1]) * sm_per_sm
-                    leaf_wetness = lw_out_table[x - 1] + sm_offset
-                    dbg_parse(1, "lw_out_table[x - 1] %s sm_offset %s"% (lw_out_table[x - 1], sm_offset))
-                    dbg_parse(1, "leaf_wetness_raw %s leaf_wetness_temp %s leaf wetness %s out %s raw %s - %s" %
-                              (leaf_wetness_raw, leaf_temp, leaf_wetness,
-                               lw_out_table[x - 1], lw_raw_table[x - 1], lw_raw_table[x]))
+                    # determine the potential value
+                    potential_per_raw =  (lookup[POT][x] - lookup[POT][x - 1]) / (lookup[RAW][x] - lookup[RAW][x - 1])
+                    potential_offset = (sensor_raw_norm - lookup[RAW][x - 1]) * potential_per_raw
+                    potential = lookup[POT][x - 1] + potential_offset
+                    dbg_parse(1, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s RAW=%s to %s POT=%s to %s " %
+                              (sensor_name, sensor_temp, norm_fact, sensor_raw, sensor_raw_norm, potential,
+                               lookup[RAW][x - 1], lookup[RAW][x], lookup[POT][x - 1], lookup[POT][x]))
                     break
-    return leaf_wetness
+    return potential, sensor_raw_norm
 
 
 RAW_CHANNEL = 0  # unused channel for the receiver stats in raw format
@@ -679,7 +659,10 @@ class Meteostick(object):
                     else:
                         data['bat_anemometer'] = bat
                     data['wind_speed'] = float(parts[2]) # m/s
-                    data['wind_dir'] = float(parts[3]) # degrees
+                    if data['wind_speed'] < 0.0001:
+                        data['wind_dir'] = None
+                    else:
+                        data['wind_dir'] = float(parts[3]) # degrees
                 elif parts[0] == 'T':
                     if th1_ch != 0 and data['channel'] == th1_ch:
                         data['bat_th_1'] = bat
@@ -705,11 +688,21 @@ class Meteostick(object):
                 data['rf_signal'] = float(parts[4])
                 data['bat_leaf_soil'] = 1 if n >= 6 and parts[5] == 'L' else 0
                 if parts[0] == 'L':
+                    # bug: the zero values of not connected leaf wetness sensors are also given
                     data['leaf_wetness_%s' % parts[2]] = float(parts[3]) # 0-15
+                    dbg_parse(1, "leaf_wetness_%s=%s" % (parts[2], float(parts[3])))
                 elif parts[0] == 'M':
                     data['soil_moisture_%s' % parts[2]] = float(parts[3]) # cbar 0-200
+                    dbg_parse(1, "soil_moisture_%s=%s" % (parts[2], float(parts[3])))
                 elif parts[0] == 'O':
                     data['soil_temp_%s' % parts[2]] = float(parts[3])  # C
+                    # When connected to ports 1 and 2 the temp sensor is also used
+                    # for the leaf wetness temperatures
+                    if int(parts[2]) <= 2:
+                        data['leaf_temp_%s' % parts[2]] = float(parts[3])  # C
+                        dbg_parse(1, "soil- and leaf_temp_%s=%s" % (parts[2], float(parts[3])))
+                    else:
+                        dbg_parse(1, "soil_temp_%s=%s" % (parts[2], float(parts[3])))
             else:
                 logerr("LMO: not enough parts (%s) in '%s'" % (n, raw))
         elif parts[0] in 'RSUP':
@@ -990,8 +983,10 @@ class Meteostick(object):
                             data['soil_temp_%s' % sensor_num] = leaf_soil_temp # C
                         if pkt[2] != 0xFF:
                             # soil moisture
-                            soil_moisture, sm_raw_norm = calculate_soil_moisture(
-                                leaf_soil_potential_raw, leaf_soil_temp)
+                            # Lookup soil moisture potential in SM_MAP (correction factor = 0.009)
+                            norm_fact = 0.009  # Normalize potential_raw for standard temp
+                            soil_moisture, sm_raw_norm = lookup_potential("soil_moisture", norm_fact,
+                                                                      leaf_soil_potential_raw, leaf_soil_temp, SM_MAP)
                             data['soil_moisture_%s' % sensor_num] = soil_moisture
                             # TODO raw values in temporary tag soil_moisture_2 to view the graph
                             data['soil_moisture_2'] = leaf_soil_potential_raw
@@ -1009,8 +1004,10 @@ class Meteostick(object):
                                       (sensor_num, leaf_soil_temp, leaf_soil_temp))
                             data['leaf_temp_%s' % sensor_num] = leaf_soil_temp # C
                         if pkt[2] != 0:
-                            leaf_wetness = calculate_leaf_wetness(
-                                leaf_soil_potential_raw, leaf_soil_temp)
+                            # Lookup leaf wetness potential in LW_MAP1 (correction factor = 0.000)
+                            norm_fact = 0.000  # Don't normalize potential_raw for standard temp
+                            leaf_wetness, lw_raw_norm = lookup_potential("leaf_wetness",
+                                                        norm_fact, leaf_soil_potential_raw, leaf_soil_temp, LW_MAP)
                             data['leaf_wetness_%s' % sensor_num] = leaf_wetness
                             # TODO raw values in temporary tag soil_moisture_4
                             # to view the graph
