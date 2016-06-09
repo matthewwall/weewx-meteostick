@@ -1,3 +1,12 @@
+0.040 09jun2016
+* Change: replaced calculate_soil_moisture by lookup_potential
+* Change: replaced calculate_leaf_wetness by lookup_potential
+* Change: no debug message if rain_count=128 (128=no sensor)
+* Change: set wind_dir to None when wind_speed == 0 (or < 0.001)
+* Added: set leaf_temp = soil_temp in machine format for channels 1 and 2
+* Change: soil moisture potential calulated with norm factor 0.009
+* Change: leaf wetness potential calulated with norm factor 0.0
+
 0.38 31may2016
 * make the initialization process more robust
 
