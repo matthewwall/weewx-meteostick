@@ -1,4 +1,18 @@
-0.040 09jun2016
+0.04 09jun2016
+
+* Added: routine new_archive_record 
+* Changed: handling of rf_stats moved to new_archive_record
+* Changed: SM-MAP and LW_map settings
+* Changed: all debug levels from 1 to 2
+* Changed: removed rainRate from DEFAULT_SENSOR_MAP
+* Changed: packets with only a battery status are now skipped
+* Changed: made handling of rain_count more robust
+* Changed: pctgood is now rounded to the nearest integer value
+* Added: Raw rainrate value checked for no sensor
+* Fixed: battery status for leaf-soil station was missing
+* Changed: Removed debug code in leaf-soil section 
+
+0.39 31may2016
 * Change: replaced calculate_soil_moisture by lookup_potential
 * Change: replaced calculate_leaf_wetness by lookup_potential
 * Change: no debug message if rain_count=128 (128=no sensor)
