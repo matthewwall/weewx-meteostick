@@ -880,8 +880,7 @@ class Meteostick(object):
                     time_between_tips_raw = ((pkt[4] & 0x30) << 4) + pkt[3]  # typical: 64-1022
                     dbg_parse(2, "time_between_tips_raw=%03x (%s)" %
                               (time_between_tips_raw, time_between_tips_raw))
-                    sensor_present = (pkt[4] & 0x7) == 0x5
-                    if sensor_present:
+                    if data['channel'] == iss_ch: # sensor is present
                         if time_between_tips_raw == 0x3FF:
                             # no rain
                             data['rain_rate'] = 0
