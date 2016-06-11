@@ -880,26 +880,25 @@ class Meteostick(object):
                     time_between_tips_raw = ((pkt[4] & 0x30) << 4) + pkt[3]  # typical: 64-1022
                     dbg_parse(2, "time_between_tips_raw=%03x (%s)" %
                               (time_between_tips_raw, time_between_tips_raw))
-                    if data['channel'] == iss_ch: # sensor is present
+                    if data['channel'] == iss_ch: # rain sensor is present
                         if time_between_tips_raw == 0x3FF:
                             # no rain
                             data['rain_rate'] = 0
                             dbg_parse(3, "no_rain=%s mm/h" % data['rain_rate'])
+                        elif pkt[4] & 0x40 == 0:
+                            # heavy rain. typical value:
+                            # 64/16 - 1020/16 = 4 - 63.8 (180.0 - 11.1 mm/h)
+                            time_between_tips = time_between_tips_raw / 16.0
+                            data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip # mm/h
+                            dbg_parse(2, "heavy_rain=%s mm/h, time_between_tips=%s s" %
+                                      (data['rain_rate'], time_between_tips))
                         else:
-                            if pkt[4] & 0x40 == 0:
-                                # heavy rain. typical value:
-                                # 64/16 - 1020/16 = 4 - 63.8 (180.0 - 11.1 mm/h)
-                                time_between_tips = time_between_tips_raw / 16.0  # convert to a real
-                                data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip # mm/h
-                                dbg_parse(2, "heavy_rain=%s mm/h, time_between_tips=%s s" %
-                                          (data['rain_rate'], time_between_tips))
-                            else:
-                                # light rain. typical value:
-                                # 64 - 1022 (11.1 - 0.8 mm/h)
-                                time_between_tips = time_between_tips_raw * 1.0  # convert to a real
-                                data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip # mm/h
-                                dbg_parse(2, "light_rain=%s mm/h, time_between_tips=%s s" %
-                                          (data['rain_rate'], time_between_tips))
+                            # light rain. typical value:
+                            # 64 - 1022 (11.1 - 0.8 mm/h)
+                            time_between_tips = time_between_tips_raw
+                            data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip # mm/h
+                            dbg_parse(2, "light_rain=%s mm/h, time_between_tips=%s s" %
+                                      (data['rain_rate'], time_between_tips))
                 elif message_type == 6:
                     # solar radiation
                     # message examples
