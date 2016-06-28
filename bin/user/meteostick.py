@@ -823,16 +823,20 @@ class Meteostick(object):
                     """
                     dbg_parse(2, "wind_speed_raw=%03x wind_dir_raw=0x%03x" %
                               (wind_speed_raw, wind_dir_raw))
+
                     # Vantage Pro and Pro2
-                    wind_dir_pro = 9.0 + wind_dir_raw * 342.0 / 255.0
-                    # Vantage Vue (maybe also for newer Pro 2)
+                    wind_dir_pro = 9.0 + (wind_dir_raw - 1) * 342.0 / 255.0
+
+                    # Vantage Vue
                     wind_dir_vue = wind_dir_raw * 1.40625 + 0.3
 
-                    wind_speed_ec = Meteostick.calc_wind_speed_ec(wind_speed_raw, wind_dir_pro)
-                    data['wind_speed'] = wind_speed_ec * MPH_TO_MPS
+                    # wind error correction is by raw byte values
+                    wind_speed_ec = Meteostick.calc_wind_speed_ec(wind_speed_raw, wind_dir_raw)
 
+                    data['wind_speed'] = wind_speed_ec * MPH_TO_MPS
                     data['wind_dir'] = wind_dir_pro
                     data['wind_speed_raw'] = wind_speed_raw * MPH_TO_MPS
+
                     dbg_parse(2, "WS=%s WSEC=%s WD=%s WD_vue=%s" %
                               (wind_speed_raw, wind_speed_ec, wind_dir_pro, wind_dir_vue))
 
@@ -1060,105 +1064,132 @@ class Meteostick(object):
             logerr("unknown sensor identifier '%s' in '%s'" % (parts[0], raw))
         return data
 
-    # Normalize and interpolate raw wind figure using Davis' OEM calibration data
+    # Normalize and interpolate raw wind values at raw angles
     @staticmethod
-    def calc_wind_speed_ec(mph, angle):
+    def calc_wind_speed_ec(raw_mph, raw_angle):
 
-        if mph <= 1:
-            return mph
+        # some sanitization: no corrections needed under 3 and no values exist above 150 mph
+        if raw_mph < 3 or raw_mph > 150:
+            return raw_mph
 
-        # Error correction values for 3 perpendicular wind directions,
-        # provided by Davis for OEM anemometer installations
-        #              0°   90/270°  180°
-        windtab = [[  23.3,  17.8,  16.4 ],  #  20 mph
-                   [  28.5,  22.3,  20.4 ],  #  25 mph
-                   [  33.8,  27.1,  25.3 ],  #  30 mph
-                   [  39.2,  31.6,  29.8 ],  #  35 mph
-                   [  44.5,  35.9,  34.3 ],  #  40 mph
-                   [  49.7,  41.2,  40.5 ],  #  45 mph
-                   [  55.0,  45.5,  45.1 ],  #  50 mph
-                   [  60.3,  50.2,  49.8 ],  #  55 mph
-                   [  65.7,  54.7,  54.1 ],  #  60 mph
-                   [  70.8,  59.0,  59.0 ],  #  65 mph
-                   [  76.2,  64.4,  63.9 ],  #  70 mph
-                   [  81.4,  69.0,  68.2 ],  #  75 mph
-                   [  86.8,  73.6,  73.1 ],  #  80 mph
-                   [  92.1,  77.6,  78.2 ],  #  85 mph
-                   [  97.4,  82.0,  83.2 ],  #  90 mph
-                   [ 102.5,  86.9,  87.5 ],  #  95 mph
-                   [ 107.7,  92.1,  92.8 ],  # 100 mph
-                   [ 113.2,  96.9,  97.3 ],  # 105 mph
-                   [ 118.5, 101.5, 102.3 ],  # 110 mph
-                   [ 123.9, 106.2, 106.5 ],  # 115 mph
-                   [ 129.5, 110.6, 111.0 ],  # 120 mph
-                   [ 135.0, 115.4, 115.3 ],  # 125 mph
-                   [ 139.8, 120.3, 119.7 ],  # 130 mph
-                   [ 144.8, 125.0, 124.0 ],  # 135 mph
-                   [ 149.3, 129.8, 128.7 ],  # 140 mph
-                   [ 154.5, 134.1, 134.5 ],  # 145 mph
-                   [ 159.8, 137.9, 138.0 ]]  # 150 mph
+        # Error correction values for [ 1..29 by 1, 30..150 by 5 raw mph ] x [ 1, 4, 8..124 by 4, 127, 128 raw degrees ]
+        # Extracted from a Davis Weather Envoy using a DIY transmitter to transmit raw values and logging LOOP packets.
+        # first row: raw angles; first column: raw speed; cells: values provided in response to raw data by the Envoy; [0][0] is filler
+        windtab = [[0, 1, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92, 96, 100, 104, 108, 112, 116, 120, 124, 127, 128],
+                   [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                   [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                   [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0],
+                   [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0],
+                   [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0],
+                   [6, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0],
+                   [7, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 0, 0],
+                   [8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 0, 0],
+                   [9, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 0, 0],
+                   [10, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 0, 0],
+                   [11, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 0, 0],
+                   [12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 0, 0],
+                   [13, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [14, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [15, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [16, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [17, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [18, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [19, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 4, 1, 0, 0],
+                   [20, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 4, 2, 0, 0],
+                   [21, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 4, 2, 0, 0],
+                   [22, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 3, 4, 4, 2, 0, 0],
+                   [23, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 3, 4, 4, 2, 0, 0],
+                   [24, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 3, 4, 4, 2, 0, 0],
+                   [25, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 3, 4, 4, 2, 0, 0],
+                   [26, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 3, 5, 4, 2, 0, 0],
+                   [27, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 3, 5, 5, 2, 0, 0],
+                   [28, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 3, 5, 5, 2, 0, 0],
+                   [29, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 3, 5, 5, 2, 0, 0],
+                   [30, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 3, 5, 5, 2, 0, 0],
+                   [35, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 4, 6, 5, 2, 0, -1],
+                   [40, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 4, 6, 6, 2, 0, -1],
+                   [45, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 4, 7, 6, 2, -1, -1],
+                   [50, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 5, 7, 7, 2, -1, -2],
+                   [55, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 5, 8, 7, 2, -1, -2],
+                   [60, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 5, 8, 8, 2, -1, -2],
+                   [65, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 5, 9, 8, 2, -2, -3],
+                   [70, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 0, 2, 5, 9, 9, 2, -2, -3],
+                   [75, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 0, 2, 6, 10, 9, 2, -2, -3],
+                   [80, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 0, 2, 6, 10, 10, 2, -2, -3],
+                   [85, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 0, 2, 7, 11, 11, 2, -3, -4],
+                   [90, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 7, 12, 11, 2, -3, -4],
+                   [95, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 3, 2, 2, 2, 1, 1, 1, 1, 2, 7, 12, 12, 3, -3, -4],
+                   [100, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 2, 1, 1, 1, 1, 2, 8, 13, 12, 3, -3, -4],
+                   [105, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1, 2, 8, 13, 13, 3, -3, -4],
+                   [110, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1, 2, 8, 14, 14, 3, -3, -5],
+                   [115, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1, 2, 9, 15, 14, 3, -3, -5],
+                   [120, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1, 3, 9, 15, 15, 3, -4, -5],
+                   [125, 1, 1, 2, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 3, 10, 16, 16, 3, -4, -5],
+                   [130, 1, 1, 2, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 3, 10, 17, 16, 3, -4, -6],
+                   [135, 1, 2, 2, 1, 1, 0, 0, 0, -1, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 4, 3, 3, 2, 2, 2, 1, 1, 3, 10, 17, 17, 4, -4, -6],
+                   [140, 1, 2, 2, 1, 1, 0, 0, 0, -1, 0, 0, 1, 1, 2, 2, 3, 3, 3, 4, 4, 3, 3, 2, 2, 2, 1, 1, 3, 11, 18, 17, 4, -4, -6],
+                   [145, 2, 2, 2, 1, 1, 0, 0, 0, -1, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 3, 3, 3, 2, 2, 1, 1, 3, 11, 19, 18, 4, -4, -6],
+                   [150, 2, 2, 2, 1, 1, 0, 0, -1, -1, 0, 0, 1, 1, 2, 3, 3, 4, 4, 4, 4, 4, 3, 3, 2, 2, 1, 1, 3, 12, 19, 19, 4, -4, -6]]
 
         # EC is symmetric between W/E (90/270°)
-        if angle > 180:
-            angle = 360 - angle
+        if raw_angle > 128:
+            raw_angle = 256 - raw_angle
 
-        # avoiding oob errors; we just need the 2 fixed perp. angle column indices
-        eccolbase = int(abs(angle - 1) / 90)
+        s0 = a0 = 1
+        s1 = a1 = None
 
-        # angle difference is 90° between EC columns, so we only need a vane angle between 0 and 90°
-        angle = 90 if angle >= 90 and angle % 90 == 0 else angle % 90
+        while windtab[s0][0] < raw_mph:
+            s0 += 1
+        while windtab[0][a0] < raw_angle:
+            a0 += 1
 
-        im = [[ { 'raw': 0, 'real': 0 }, { 'raw': 0, 'real': 0 } ],
-              [ { 'raw': 0, 'real': 0 }, { 'raw': 0, 'real': 0 } ]]
+        if windtab[s0][0] == raw_mph:
+            s1 = s0
+        else:
+            s1 = len(windtab) - 1 if s0 == len(windtab) - 1 else s0 + 1
 
-        # Find the raw EC values in the table for the raw wind speed in mph
-        # for the 2 perpendicular angles above and below the vane angle.
-        # Then we have im[][] filled for interpolation
-        for icol in [0, 1]:
-            if mph <= windtab[0][eccolbase + icol]:  # no EC for values below 20 mph
-                im[0][icol]['raw']  = 1.0
-                im[0][icol]['real'] = 1.0
-                im[1][icol]['raw']  = windtab[0][eccolbase + icol]
-                im[1][icol]['real'] = 20.0
-            elif mph >= windtab[len(windtab) - 1][eccolbase + icol]:  # no EC for values above 150 mph
-                return mph
-            else:  # find EC row for raw value for current angle column
-                i = 0
-                while mph > windtab[i][eccolbase + icol]:
-                    i += 1
-                im[0][icol]['raw']  = windtab[i - 1][eccolbase + icol]
-                im[0][icol]['real'] = 15 + i * 5
-                im[1][icol]['raw']  = windtab[i][eccolbase + icol]
-                im[1][icol]['real'] = 20 + i * 5
+        if windtab[0][a0] == raw_angle:
+            a1 = a0
+        else:
+            a1 = len(windtab[0]) - 2 if a0 == len(windtab) - 1 else a0 + 1
 
-        return Meteostick.interpolate(mph, angle, im)
+        if s0 == s1 and a0 == a1:
+            return windtab[s0][a0]
+        else:
+            return Meteostick.interpolate(windtab[0][a0], windtab[0][a1],
+                                          windtab[s0][0], windtab[s1][0],
+                                          windtab[s0][a0], windtab[s0][a1],
+                                          windtab[s1][a0], windtab[s1][a1],
+                                          raw_angle, raw_mph)
 
-    # Simple bilinear interpolation for a point in a quad represented by its 4 "corners" in im[][]
-    # assumption: angle is always between 0 and 90
+    # Simple bilinear interpolation
+    #
+    #  x0---------x1 <-- fixed raw angles
+    #  |          |
+    #  |          |
+    #  |      * <-|-- raw speed value at raw input angle (x, y)
+    #  |          |
+    #  y0---------y1
+    #             ^
+    #             \__ corrected speed values
+    #
     @staticmethod
-    def interpolate(mph, angle, im):
-        if im[0][0]['raw'] == im[1][0]['raw']:
-            mph1 = im[0][0]['real']
-        else:
-            mph1 = im[0][0]['real'] + (im[1][0]['real'] - im[0][0]['real']) * (mph - im[0][0]['raw']) / (im[1][0]['raw'] - im[0][0]['raw'])
+    def interpolate(rx0, rx1,
+                    ry0, ry1,
+                    x0, x1,
+                    y0, y1,
+                    x, y):
 
-        if im[0][1]['raw'] == im[1][1]['raw']:
-            mph2 = im[0][1]['real']
-        else:
-            mph2 = im[0][1]['real'] + (im[1][1]['real'] - im[0][1]['real']) * (mph - im[0][1]['raw']) / (im[1][1]['raw'] - im[0][1]['raw'])
+        if rx0 == rx1:
+            return y + (y - ry0) / (ry1 - ry0) * (y1 - y0)
 
-        logdbg("im[0] %s" % im[0])
-        logdbg("im[1] %s" % im[1])
-        logdbg("mph1 %s" % mph1)
-        logdbg("mph2 %s" % mph2)
+        if ry0 == ry1:
+            return y + (x - rx0) / (rx1 - rx0) * (x1 - x0)
 
-        ecmph1 = mph1 + math.cos(math.radians(angle)) * (mph1 - mph) + math.sin(math.radians(angle)) * (mph2 - mph)
-        ecmph2 = mph1 + angle / 90.0 * (mph2 - mph1)
+        dy0 = (y - ry0) / (ry1 - ry0) * (y0 - x0)
+        dy1 = (y - ry0) / (ry1 - ry0) * (y1 - x1)
 
-        logdbg("ecdata %s %s %s %s %s" % (int(time.time()), angle, mph, ecmph1, ecmph2))
-
-        # return int(ecmph1 + 0.5)
-        return ecmph1
+        return y + (x - rx0) / (rx1 - rx0) * (dy1 - dy0)
 
 
 class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
