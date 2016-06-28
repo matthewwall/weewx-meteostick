@@ -1136,7 +1136,6 @@ class Meteostick(object):
             raw_angle = 256 - raw_angle
 
         s0 = a0 = 1
-        s1 = a1 = None
 
         while windtab[s0][0] < raw_mph:
             s0 += 1
