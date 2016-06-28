@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 # Meteostick driver for weewx
 #
 # Copyright 2016 Matthew Wall, Luc Heijst
@@ -195,6 +196,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         'pressure': 'pressure',
         'in_temp': 'inTemp',  # temperature inside meteostick
         'wind_speed': 'windSpeed',
+        'wind_speed_raw': 'windSpeedRaw',
         'wind_dir': 'windDir',
         'temperature': 'outTemp',
         'humidity': 'outHumidity',
@@ -821,15 +823,18 @@ class Meteostick(object):
                     """
                     dbg_parse(2, "wind_speed_raw=%03x wind_dir_raw=0x%03x" %
                               (wind_speed_raw, wind_dir_raw))
-                    data['wind_speed'] = wind_speed_raw * MPH_TO_MPS
-                    ws = wind_speed_raw # mph
                     # Vantage Pro and Pro2
                     wind_dir_pro = 9.0 + wind_dir_raw * 342.0 / 255.0
                     # Vantage Vue (maybe also for newer Pro 2)
                     wind_dir_vue = wind_dir_raw * 1.40625 + 0.3
+
+                    wind_speed_ec = Meteostick.calc_wind_speed_ec(wind_speed_raw, wind_dir_pro)
+                    data['wind_speed'] = wind_speed_ec * MPH_TO_MPS
+
                     data['wind_dir'] = wind_dir_pro
-                    dbg_parse(2, "WS=%s WD=%s WD_vue=%s" %
-                              (ws, wind_dir_pro, wind_dir_vue))
+                    data['wind_speed_raw'] = wind_speed_raw * MPH_TO_MPS
+                    dbg_parse(2, "WS=%s WSEC=%s WD=%s WD_vue=%s" %
+                              (wind_speed_raw, wind_speed_ec, wind_dir_pro, wind_dir_vue))
 
                 # data from both iss sensors and extra sensors on
                 # Anemometer Transport Kit
@@ -905,7 +910,7 @@ class Meteostick(object):
                     # I 104 61 0 DB 0 43 0 F4 3B  -66 2624972 121
                     # I 104 60 0 0 FF C5 0 79 DA  -77 2562444 137 (no sensor)
                     sr_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
-                    if sr_raw != 0x3FF:
+                    if sr_raw < 0x3FE:
                         data['solar_radiation'] = sr_raw * 1.757936
                         dbg_parse(2, "solar_radiation_raw=0x%04x value=%s"
                                   % (sr_raw, data['solar_radiation']))
@@ -1054,6 +1059,106 @@ class Meteostick(object):
         else:
             logerr("unknown sensor identifier '%s' in '%s'" % (parts[0], raw))
         return data
+
+    # Normalize and interpolate raw wind figure using Davis' OEM calibration data
+    @staticmethod
+    def calc_wind_speed_ec(mph, angle):
+
+        if mph <= 1:
+            return mph
+
+        # Error correction values for 3 perpendicular wind directions,
+        # provided by Davis for OEM anemometer installations
+        #              0°   90/270°  180°
+        windtab = [[  23.3,  17.8,  16.4 ],  #  20 mph
+                   [  28.5,  22.3,  20.4 ],  #  25 mph
+                   [  33.8,  27.1,  25.3 ],  #  30 mph
+                   [  39.2,  31.6,  29.8 ],  #  35 mph
+                   [  44.5,  35.9,  34.3 ],  #  40 mph
+                   [  49.7,  41.2,  40.5 ],  #  45 mph
+                   [  55.0,  45.5,  45.1 ],  #  50 mph
+                   [  60.3,  50.2,  49.8 ],  #  55 mph
+                   [  65.7,  54.7,  54.1 ],  #  60 mph
+                   [  70.8,  59.0,  59.0 ],  #  65 mph
+                   [  76.2,  64.4,  63.9 ],  #  70 mph
+                   [  81.4,  69.0,  68.2 ],  #  75 mph
+                   [  86.8,  73.6,  73.1 ],  #  80 mph
+                   [  92.1,  77.6,  78.2 ],  #  85 mph
+                   [  97.4,  82.0,  83.2 ],  #  90 mph
+                   [ 102.5,  86.9,  87.5 ],  #  95 mph
+                   [ 107.7,  92.1,  92.8 ],  # 100 mph
+                   [ 113.2,  96.9,  97.3 ],  # 105 mph
+                   [ 118.5, 101.5, 102.3 ],  # 110 mph
+                   [ 123.9, 106.2, 106.5 ],  # 115 mph
+                   [ 129.5, 110.6, 111.0 ],  # 120 mph
+                   [ 135.0, 115.4, 115.3 ],  # 125 mph
+                   [ 139.8, 120.3, 119.7 ],  # 130 mph
+                   [ 144.8, 125.0, 124.0 ],  # 135 mph
+                   [ 149.3, 129.8, 128.7 ],  # 140 mph
+                   [ 154.5, 134.1, 134.5 ],  # 145 mph
+                   [ 159.8, 137.9, 138.0 ]]  # 150 mph
+
+        # EC is symmetric between W/E (90/270°)
+        if angle > 180:
+            angle = 360 - angle
+
+        # avoiding oob errors; we just need the 2 fixed perp. angle column indices
+        eccolbase = int(abs(angle - 1) / 90)
+
+        # angle difference is 90° between EC columns, so we only need a vane angle between 0 and 90°
+        angle = 90 if angle >= 90 and angle % 90 == 0 else angle % 90
+
+        im = [[ { 'raw': 0, 'real': 0 }, { 'raw': 0, 'real': 0 } ],
+              [ { 'raw': 0, 'real': 0 }, { 'raw': 0, 'real': 0 } ]]
+
+        # Find the raw EC values in the table for the raw wind speed in mph
+        # for the 2 perpendicular angles above and below the vane angle.
+        # Then we have im[][] filled for interpolation
+        for icol in [0, 1]:
+            if mph <= windtab[0][eccolbase + icol]:  # no EC for values below 20 mph
+                im[0][icol]['raw']  = 1.0
+                im[0][icol]['real'] = 1.0
+                im[1][icol]['raw']  = windtab[0][eccolbase + icol]
+                im[1][icol]['real'] = 20.0
+            elif mph >= windtab[len(windtab) - 1][eccolbase + icol]:  # no EC for values above 150 mph
+                return mph
+            else:  # find EC row for raw value for current angle column
+                i = 0
+                while mph > windtab[i][eccolbase + icol]:
+                    i += 1
+                im[0][icol]['raw']  = windtab[i - 1][eccolbase + icol]
+                im[0][icol]['real'] = 15 + i * 5
+                im[1][icol]['raw']  = windtab[i][eccolbase + icol]
+                im[1][icol]['real'] = 20 + i * 5
+
+        return Meteostick.interpolate(mph, angle, im)
+
+    # Simple bilinear interpolation for a point in a quad represented by its 4 "corners" in im[][]
+    # assumption: angle is always between 0 and 90
+    @staticmethod
+    def interpolate(mph, angle, im):
+        if im[0][0]['raw'] == im[1][0]['raw']:
+            mph1 = im[0][0]['real']
+        else:
+            mph1 = im[0][0]['real'] + (im[1][0]['real'] - im[0][0]['real']) * (mph - im[0][0]['raw']) / (im[1][0]['raw'] - im[0][0]['raw'])
+
+        if im[0][1]['raw'] == im[1][1]['raw']:
+            mph2 = im[0][1]['real']
+        else:
+            mph2 = im[0][1]['real'] + (im[1][1]['real'] - im[0][1]['real']) * (mph - im[0][1]['raw']) / (im[1][1]['raw'] - im[0][1]['raw'])
+
+        logdbg("im[0] %s" % im[0])
+        logdbg("im[1] %s" % im[1])
+        logdbg("mph1 %s" % mph1)
+        logdbg("mph2 %s" % mph2)
+
+        ecmph1 = mph1 + math.cos(math.radians(angle)) * (mph1 - mph) + math.sin(math.radians(angle)) * (mph2 - mph)
+        ecmph2 = mph1 + angle / 90.0 * (mph2 - mph1)
+
+        logdbg("ecdata %s %s %s %s %s" % (int(time.time()), angle, mph, ecmph1, ecmph2))
+
+        # return int(ecmph1 + 0.5)
+        return ecmph1
 
 
 class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
