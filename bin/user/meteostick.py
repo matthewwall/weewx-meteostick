@@ -837,8 +837,9 @@ class Meteostick(object):
                     data['wind_dir'] = wind_dir_pro
                     data['wind_speed_raw'] = wind_speed_raw * MPH_TO_MPS
 
-                    dbg_parse(2, "WS=%s WSEC=%s WD=%s WD_vue=%s" %
-                              (wind_speed_raw, wind_speed_ec, wind_dir_pro, wind_dir_vue))
+                    dbg_parse(2, "WS=%s WSEC=%s WDECRAW=%s WD=%s WD_vue=%s" %
+                              (wind_speed_raw, wind_speed_ec,
+                               wind_dir_raw if wind_dir_raw <= 180 else 360 - wind_dir_raw, wind_dir_pro, wind_dir_vue))
 
                 # data from both iss sensors and extra sensors on
                 # Anemometer Transport Kit
@@ -1182,6 +1183,9 @@ class Meteostick(object):
                     x0, x1,
                     y0, y1,
                     x, y):
+
+        dbg_parse(2, "rx0=%s, rx1=%s, ry0=%s, ry1=%s, x0=%s, x1=%s, y0=%s, y1=%s, x=%s, y=%s" %
+                  (rx0, rx1, ry0, ry1, x0, x1, y0, y1, x, y))
 
         if rx0 == rx1:
             return y + x0 + (y - ry0) / float(ry1 - ry0) * (y1 - y0)
