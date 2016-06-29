@@ -321,7 +321,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                 logdbg("rain=%s rain_count=%s last_rain_count=%s" %
                        (packet['rain'], rain_count, self.last_rain_count))
         packet['dateTime'] = int(time.time() + 0.5)
-        packet['usUnits'] = weewx.METRICWX
+        packet['usUnits'] = weewx.US
         return packet
 
     def _init_rf_stats(self):
@@ -831,11 +831,11 @@ class Meteostick(object):
                     wind_dir_vue = wind_dir_raw * 1.40625 + 0.3
 
                     # wind error correction is by raw byte values
-                    wind_speed_ec = Meteostick.calc_wind_speed_ec(wind_speed_raw, wind_dir_raw)
+                    wind_speed_ec = round(Meteostick.calc_wind_speed_ec(wind_speed_raw, wind_dir_raw))
 
-                    data['wind_speed'] = wind_speed_ec * MPH_TO_MPS
+                    data['wind_speed'] = wind_speed_ec # * MPH_TO_MPS
                     data['wind_dir'] = wind_dir_pro
-                    data['wind_speed_raw'] = wind_speed_raw * MPH_TO_MPS
+                    data['wind_speed_raw'] = wind_speed_raw # * MPH_TO_MPS
 
                     dbg_parse(2, "WS=%s WSEC=%s WDECRAW=%s WD=%s WD_vue=%s" %
                               (wind_speed_raw, wind_speed_ec,
