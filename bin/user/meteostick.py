@@ -1145,21 +1145,25 @@ class Meteostick(object):
         if windtab[s0][0] == raw_mph:
             s1 = s0
         else:
+            if s0 > 1:
+                s0 -= 1
             s1 = len(windtab) - 1 if s0 == len(windtab) - 1 else s0 + 1
 
         if windtab[0][a0] == raw_angle:
             a1 = a0
         else:
+            if a0 > 1:
+                a0 -= 1
             a1 = len(windtab[0]) - 2 if a0 == len(windtab) - 1 else a0 + 1
 
         if s0 == s1 and a0 == a1:
-            return windtab[s0][a0]
+            return raw_mph + windtab[s0][a0]
         else:
             return Meteostick.interpolate(windtab[0][a0], windtab[0][a1],
-                                          windtab[s0][0], windtab[s1][0],
-                                          windtab[s0][a0], windtab[s0][a1],
-                                          windtab[s1][a0], windtab[s1][a1],
-                                          raw_angle, raw_mph)
+                               windtab[s0][0], windtab[s1][0],
+                               windtab[s0][a0], windtab[s0][a1],
+                               windtab[s1][a0], windtab[s1][a1],
+                               raw_angle, raw_mph)
 
     # Simple bilinear interpolation
     #
@@ -1180,15 +1184,15 @@ class Meteostick(object):
                     x, y):
 
         if rx0 == rx1:
-            return y + (y - ry0) / (ry1 - ry0) * (y1 - y0)
+            return y + x0 + (y - ry0) / float(ry1 - ry0) * (y1 - y0)
 
         if ry0 == ry1:
-            return y + (x - rx0) / (rx1 - rx0) * (x1 - x0)
+            return y + y0 + (x - rx0) / float(rx1 - rx0) * (x1 - x0)
 
-        dy0 = (y - ry0) / (ry1 - ry0) * (y0 - x0)
-        dy1 = (y - ry0) / (ry1 - ry0) * (y1 - x1)
+        dy0 = x0 + (y - ry0) / float(ry1 - ry0) * (y0 - x0)
+        dy1 = x1 + (y - ry0) / float(ry1 - ry0) * (y1 - x1)
 
-        return y + (x - rx0) / (rx1 - rx0) * (dy1 - dy0)
+        return y + dy0 + (x - rx0) / float(rx1 - rx0) * (dy1 - dy0)
 
 
 class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
