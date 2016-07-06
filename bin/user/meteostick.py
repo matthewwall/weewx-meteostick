@@ -778,7 +778,7 @@ class Meteostick(object):
                 pressure = float(parts[4]) / 100.0 # hPa
                 data['pressure'] = conv.convert((pressure, 'mbar', 'group_pressure'))[0]
                 if n > 7:
-                    data['in_humidity'] = parts[7] # only with custom receiver
+                    data['in_humidity'] = float(parts[7]) # only with custom receiver
             else:
                 logerr("B: not enough parts (%s) in '%s'" % (n, raw))
         elif parts[0] == 'I':
