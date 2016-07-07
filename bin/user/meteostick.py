@@ -1139,7 +1139,7 @@ class Meteostick(object):
                    [145, 2, 2, 2, 1, 1, 0, 0, 0, -1, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 3, 3, 3, 2, 2, 1, 1, 3, 11, 19, 18, 4, -4, -6],
                    [150, 2, 2, 2, 1, 1, 0, 0, -1, -1, 0, 0, 1, 1, 2, 3, 3, 4, 4, 4, 4, 4, 3, 3, 2, 2, 1, 1, 3, 12, 19, 19, 4, -4, -6]]
 
-        # EC is symmetric between W/E (90/270°)
+        # EC is symmetric between W/E (90/270°) - probably a wrong assumption, table needs to be redone for 0-360°
         if raw_angle > 128:
             raw_angle = 256 - raw_angle
 
@@ -1168,21 +1168,22 @@ class Meteostick(object):
             return raw_mph + windtab[s0][a0]
         else:
             return Meteostick.interpolate(windtab[0][a0], windtab[0][a1],
-                               windtab[s0][0], windtab[s1][0],
-                               windtab[s0][a0], windtab[s0][a1],
-                               windtab[s1][a0], windtab[s1][a1],
-                               raw_angle, raw_mph)
+                                          windtab[s0][0], windtab[s1][0],
+                                          windtab[s0][a0], windtab[s0][a1],
+                                          windtab[s1][a0], windtab[s1][a1],
+                                          raw_angle, raw_mph)
 
     # Simple bilinear interpolation
     #
-    #  x0---------x1 <-- fixed raw angles
+    #  a0         a1 <-- fixed raw angles
+    #  x0---------x1 s0
     #  |          |
     #  |          |
-    #  |      * <-|-- raw speed value at raw input angle (x, y)
+    #  |      * <-|-- raw input angle, raw speed value (x, y)
     #  |          |
-    #  y0---------y1
-    #             ^
-    #             \__ corrected speed values
+    #  y0---------y1 s1
+    #                ^
+    #                \__ speed: measured raw / correction values
     #
     @staticmethod
     def interpolate(rx0, rx1,
