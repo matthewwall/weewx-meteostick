@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 # Meteostick driver for weewx
 #
 # Copyright 2016 Matthew Wall, Luc Heijst
@@ -44,6 +45,7 @@ import weewx
 import weewx.drivers
 import weewx.engine
 import weewx.wxformulas
+import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
@@ -195,9 +197,11 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         'pressure': 'pressure',
         'in_temp': 'inTemp',  # temperature inside meteostick
         'wind_speed': 'windSpeed',
+        'wind_speed_raw': 'windSpeedRaw',
         'wind_dir': 'windDir',
         'temperature': 'outTemp',
         'humidity': 'outHumidity',
+        'in_humidity': 'inHumidity',
         'rain_count': 'rain',
         # To use a rainRate calculation from this driver that closely matches
         # that of a Davis station, uncomment the rainRate field then specify
@@ -249,7 +253,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                                        self.DEFAULT_RAIN_BUCKET_TYPE))
         if bucket_type not in [0, 1]:
             raise ValueError("unsupported rain bucket type %s" % bucket_type)
-        self.rain_per_tip = 0.254 if bucket_type == 0 else 0.2 # mm
+        self.rain_per_tip = 0.01 if bucket_type == 0 else 0.00787402 # inches
         loginf('using rain_bucket_type %s' % bucket_type)
         self.sensor_map = stn_dict.get('sensor_map', self.DEFAULT_SENSOR_MAP)
         loginf('sensor map is: %s' % self.sensor_map)
@@ -314,12 +318,12 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                        rain_count)
                 rain_count += 128
             self.last_rain_count = data['rain_count']
-            packet['rain'] = float(rain_count) * self.rain_per_tip # mm
+            packet['rain'] = float(rain_count) * self.rain_per_tip
             if DEBUG_RAIN:
                 logdbg("rain=%s rain_count=%s last_rain_count=%s" %
                        (packet['rain'], rain_count, self.last_rain_count))
         packet['dateTime'] = int(time.time() + 0.5)
-        packet['usUnits'] = weewx.METRICWX
+        packet['usUnits'] = weewx.US
         return packet
 
     def _init_rf_stats(self):
@@ -758,6 +762,7 @@ class Meteostick(object):
 
     @staticmethod
     def parse_raw(raw, iss_ch, wind_ch, ls_ch, th1_ch, th2_ch, rain_per_tip):
+        conv = weewx.units.Converter()
         data = dict()
         parts = Meteostick.get_parts(raw)
         n = len(parts)
@@ -768,8 +773,12 @@ class Meteostick(object):
             data['rf_signal'] = 0  # not available
             data['rf_missed'] = 0  # not available
             if n >= 6:
-                data['in_temp'] = float(parts[3]) / 10.0 # C
-                data['pressure'] = float(parts[4]) / 100.0 # hPa
+                in_temp = float(parts[3]) / 10.0 # C
+                data['in_temp'] = conv.convert((in_temp, 'degree_C', 'group_temperature'))[0]
+                pressure = float(parts[4]) / 100.0 # hPa
+                data['pressure'] = conv.convert((pressure, 'mbar', 'group_pressure'))[0]
+                if n > 7:
+                    data['in_humidity'] = float(parts[7]) # only with custom receiver
             else:
                 logerr("B: not enough parts (%s) in '%s'" % (n, raw))
         elif parts[0] == 'I':
@@ -821,15 +830,23 @@ class Meteostick(object):
                     """
                     dbg_parse(2, "wind_speed_raw=%03x wind_dir_raw=0x%03x" %
                               (wind_speed_raw, wind_dir_raw))
-                    data['wind_speed'] = wind_speed_raw * MPH_TO_MPS
-                    ws = wind_speed_raw # mph
+
                     # Vantage Pro and Pro2
-                    wind_dir_pro = 9.0 + wind_dir_raw * 342.0 / 255.0
-                    # Vantage Vue (maybe also for newer Pro 2)
+                    wind_dir_pro = 9.0 + (wind_dir_raw - 1) * 342.0 / 255.0
+
+                    # Vantage Vue
                     wind_dir_vue = wind_dir_raw * 1.40625 + 0.3
+
+                    # wind error correction is by raw byte values
+                    wind_speed_ec = round(Meteostick.calc_wind_speed_ec(wind_speed_raw, wind_dir_raw))
+
+                    data['wind_speed'] = wind_speed_ec # * MPH_TO_MPS
                     data['wind_dir'] = wind_dir_pro
-                    dbg_parse(2, "WS=%s WD=%s WD_vue=%s" %
-                              (ws, wind_dir_pro, wind_dir_vue))
+                    data['wind_speed_raw'] = wind_speed_raw # * MPH_TO_MPS
+
+                    dbg_parse(2, "WS=%s WSEC=%s WDECRAW=%s WD=%s WD_vue=%s" %
+                              (wind_speed_raw, wind_speed_ec,
+                               wind_dir_raw if wind_dir_raw <= 180 else 360 - wind_dir_raw, wind_dir_pro, wind_dir_vue))
 
                 # data from both iss sensors and extra sensors on
                 # Anemometer Transport Kit
@@ -889,14 +906,14 @@ class Meteostick(object):
                             # heavy rain. typical value:
                             # 64/16 - 1020/16 = 4 - 63.8 (180.0 - 11.1 mm/h)
                             time_between_tips = time_between_tips_raw / 16.0
-                            data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip # mm/h
+                            data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip
                             dbg_parse(2, "heavy_rain=%s mm/h, time_between_tips=%s s" %
                                       (data['rain_rate'], time_between_tips))
                         else:
                             # light rain. typical value:
                             # 64 - 1022 (11.1 - 0.8 mm/h)
                             time_between_tips = time_between_tips_raw
-                            data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip # mm/h
+                            data['rain_rate'] = 3600.0 / time_between_tips * rain_per_tip
                             dbg_parse(2, "light_rain=%s mm/h, time_between_tips=%s s" %
                                       (data['rain_rate'], time_between_tips))
                 elif message_type == 6:
@@ -905,7 +922,7 @@ class Meteostick(object):
                     # I 104 61 0 DB 0 43 0 F4 3B  -66 2624972 121
                     # I 104 60 0 0 FF C5 0 79 DA  -77 2562444 137 (no sensor)
                     sr_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
-                    if sr_raw != 0x3FF:
+                    if sr_raw < 0x3FE:
                         data['solar_radiation'] = sr_raw * 1.757936
                         dbg_parse(2, "solar_radiation_raw=0x%04x value=%s"
                                   % (sr_raw, data['solar_radiation']))
@@ -930,7 +947,7 @@ class Meteostick(object):
                     temp_f_raw = (pkt[3] << 4) + (pkt[4] >> 4)
                     if temp_f_raw != 0xFFC:
                         temp_f = temp_f_raw / 10.0
-                        data['temperature'] = weewx.wxformulas.FtoC(temp_f) # C
+                        data['temperature'] = temp_f
                         dbg_parse(2, "temp_f_raw=0x%03x temp_f=%s temp_c=%s"
                                   % (temp_f_raw, temp_f, data['temperature']))
                 elif message_type == 9:
@@ -1003,7 +1020,7 @@ class Meteostick(object):
                             leaf_soil_temp = calculate_leaf_soil_temp(leaf_soil_temp_raw)
                             dbg_parse(2, "soil_temp_%s_raw=0x%03x (%s)" %
                                       (sensor_num, leaf_soil_temp, leaf_soil_temp))
-                            data['soil_temp_%s' % sensor_num] = leaf_soil_temp # C
+                            data['soil_temp_%s' % sensor_num] = conv.convert((leaf_soil_temp, 'degree_C', 'group_temperature'))[0]
                         if pkt[2] != 0xFF:
                             # soil moisture potential
                             # Lookup soil moisture potential in SM_MAP (correction factor = 0.009)
@@ -1022,7 +1039,7 @@ class Meteostick(object):
                             leaf_soil_temp = calculate_leaf_soil_temp(leaf_soil_temp_raw)
                             dbg_parse(2, "leaf_temp_%s_raw=0x%03x (%s)" %
                                       (sensor_num, leaf_soil_temp, leaf_soil_temp))
-                            data['leaf_temp_%s' % sensor_num] = leaf_soil_temp # C
+                            data['leaf_temp_%s' % sensor_num] = conv.convert((leaf_soil_temp, 'degree_C', 'group_temperature'))[0]
                         if pkt[2] != 0:
                             # leaf wetness potential
                             # Lookup leaf wetness potential in LW_MAP (correction factor = 0.0)
@@ -1054,6 +1071,140 @@ class Meteostick(object):
         else:
             logerr("unknown sensor identifier '%s' in '%s'" % (parts[0], raw))
         return data
+
+    # Normalize and interpolate raw wind values at raw angles
+    @staticmethod
+    def calc_wind_speed_ec(raw_mph, raw_angle):
+
+        # some sanitization: no corrections needed under 3 and no values exist above 150 mph
+        if raw_mph < 3 or raw_mph > 150:
+            return raw_mph
+
+        # Error correction values for [ 1..29 by 1, 30..150 by 5 raw mph ] x [ 1, 4, 8..124 by 4, 127, 128 raw degrees ]
+        # Extracted from a Davis Weather Envoy using a DIY transmitter to transmit raw values and logging LOOP packets.
+        # first row: raw angles; first column: raw speed; cells: values provided in response to raw data by the Envoy; [0][0] is filler
+        windtab = [[0, 1, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92, 96, 100, 104, 108, 112, 116, 120, 124, 127, 128],
+                   [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                   [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                   [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0],
+                   [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0],
+                   [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0],
+                   [6, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0],
+                   [7, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 0, 0],
+                   [8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 0, 0],
+                   [9, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 0, 0],
+                   [10, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 0, 0],
+                   [11, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 0, 0],
+                   [12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 0, 0],
+                   [13, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [14, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [15, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [16, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [17, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [18, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 1, 0, 0],
+                   [19, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 4, 1, 0, 0],
+                   [20, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 4, 2, 0, 0],
+                   [21, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 4, 2, 0, 0],
+                   [22, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 3, 4, 4, 2, 0, 0],
+                   [23, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 3, 4, 4, 2, 0, 0],
+                   [24, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 3, 4, 4, 2, 0, 0],
+                   [25, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 3, 4, 4, 2, 0, 0],
+                   [26, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 3, 5, 4, 2, 0, 0],
+                   [27, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 3, 5, 5, 2, 0, 0],
+                   [28, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 3, 5, 5, 2, 0, 0],
+                   [29, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 3, 5, 5, 2, 0, 0],
+                   [30, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 3, 5, 5, 2, 0, 0],
+                   [35, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 4, 6, 5, 2, 0, -1],
+                   [40, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 4, 6, 6, 2, 0, -1],
+                   [45, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 4, 7, 6, 2, -1, -1],
+                   [50, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 5, 7, 7, 2, -1, -2],
+                   [55, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 5, 8, 7, 2, -1, -2],
+                   [60, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 5, 8, 8, 2, -1, -2],
+                   [65, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 5, 9, 8, 2, -2, -3],
+                   [70, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 0, 2, 5, 9, 9, 2, -2, -3],
+                   [75, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 0, 2, 6, 10, 9, 2, -2, -3],
+                   [80, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 0, 2, 6, 10, 10, 2, -2, -3],
+                   [85, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 0, 2, 7, 11, 11, 2, -3, -4],
+                   [90, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 7, 12, 11, 2, -3, -4],
+                   [95, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 3, 2, 2, 2, 1, 1, 1, 1, 2, 7, 12, 12, 3, -3, -4],
+                   [100, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 2, 1, 1, 1, 1, 2, 8, 13, 12, 3, -3, -4],
+                   [105, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1, 2, 8, 13, 13, 3, -3, -4],
+                   [110, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1, 2, 8, 14, 14, 3, -3, -5],
+                   [115, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1, 2, 9, 15, 14, 3, -3, -5],
+                   [120, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1, 3, 9, 15, 15, 3, -4, -5],
+                   [125, 1, 1, 2, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 3, 10, 16, 16, 3, -4, -5],
+                   [130, 1, 1, 2, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 3, 10, 17, 16, 3, -4, -6],
+                   [135, 1, 2, 2, 1, 1, 0, 0, 0, -1, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 4, 3, 3, 2, 2, 2, 1, 1, 3, 10, 17, 17, 4, -4, -6],
+                   [140, 1, 2, 2, 1, 1, 0, 0, 0, -1, 0, 0, 1, 1, 2, 2, 3, 3, 3, 4, 4, 3, 3, 2, 2, 2, 1, 1, 3, 11, 18, 17, 4, -4, -6],
+                   [145, 2, 2, 2, 1, 1, 0, 0, 0, -1, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 3, 3, 3, 2, 2, 1, 1, 3, 11, 19, 18, 4, -4, -6],
+                   [150, 2, 2, 2, 1, 1, 0, 0, -1, -1, 0, 0, 1, 1, 2, 3, 3, 4, 4, 4, 4, 4, 3, 3, 2, 2, 1, 1, 3, 12, 19, 19, 4, -4, -6]]
+
+        # EC is symmetric between W/E (90/270°) - probably a wrong assumption, table needs to be redone for 0-360°
+        if raw_angle > 128:
+            raw_angle = 256 - raw_angle
+
+        s0 = a0 = 1
+
+        while windtab[s0][0] < raw_mph:
+            s0 += 1
+        while windtab[0][a0] < raw_angle:
+            a0 += 1
+
+        if windtab[s0][0] == raw_mph:
+            s1 = s0
+        else:
+            if s0 > 1:
+                s0 -= 1
+            s1 = len(windtab) - 1 if s0 == len(windtab) - 1 else s0 + 1
+
+        if windtab[0][a0] == raw_angle:
+            a1 = a0
+        else:
+            if a0 > 1:
+                a0 -= 1
+            a1 = len(windtab[0]) - 2 if a0 == len(windtab) - 1 else a0 + 1
+
+        if s0 == s1 and a0 == a1:
+            return raw_mph + windtab[s0][a0]
+        else:
+            return Meteostick.interpolate(windtab[0][a0], windtab[0][a1],
+                                          windtab[s0][0], windtab[s1][0],
+                                          windtab[s0][a0], windtab[s0][a1],
+                                          windtab[s1][a0], windtab[s1][a1],
+                                          raw_angle, raw_mph)
+
+    # Simple bilinear interpolation
+    #
+    #  a0         a1 <-- fixed raw angles
+    #  x0---------x1 s0
+    #  |          |
+    #  |          |
+    #  |      * <-|-- raw input angle, raw speed value (x, y)
+    #  |          |
+    #  y0---------y1 s1
+    #                ^
+    #                \__ speed: measured raw / correction values
+    #
+    @staticmethod
+    def interpolate(rx0, rx1,
+                    ry0, ry1,
+                    x0, x1,
+                    y0, y1,
+                    x, y):
+
+        dbg_parse(2, "rx0=%s, rx1=%s, ry0=%s, ry1=%s, x0=%s, x1=%s, y0=%s, y1=%s, x=%s, y=%s" %
+                  (rx0, rx1, ry0, ry1, x0, x1, y0, y1, x, y))
+
+        if rx0 == rx1:
+            return y + x0 + (y - ry0) / float(ry1 - ry0) * (y1 - y0)
+
+        if ry0 == ry1:
+            return y + y0 + (x - rx0) / float(rx1 - rx0) * (x1 - x0)
+
+        dy0 = x0 + (y - ry0) / float(ry1 - ry0) * (y0 - x0)
+        dy1 = x1 + (y - ry0) / float(ry1 - ry0) * (y1 - x1)
+
+        return y + dy0 + (x - rx0) / float(rx1 - rx0) * (dy1 - dy0)
 
 
 class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
