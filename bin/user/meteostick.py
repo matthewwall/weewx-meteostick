@@ -915,7 +915,7 @@ class Meteostick(object):
                     # I 104 61 0 DB 0 43 0 F4 3B  -66 2624972 121
                     # I 104 60 0 0 FF C5 0 79 DA  -77 2562444 137 (no sensor)
                     sr_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
-                    if sr_raw != 0x3FF:
+                    if sr_raw < 0x3FE:
                         data['solar_radiation'] = sr_raw * 1.757936
                         dbg_parse(2, "solar_radiation_raw=0x%04x value=%s"
                                   % (sr_raw, data['solar_radiation']))
