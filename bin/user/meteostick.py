@@ -1264,7 +1264,7 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
             help="display meteostick configuration")
         parser.add_option(
             "--show-options", dest="opts", action="store_true",
-            help="display meteostic command options")
+            help="display meteostick command options")
         parser.add_option(
             "--set-verbose", dest="verbose", metavar="X", type=int,
             help="set verbose: 0=off, 1=on; default off")
