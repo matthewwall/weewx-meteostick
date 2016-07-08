@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 # Meteostick driver for weewx
 #
 # Copyright 2016 Matthew Wall, Luc Heijst
@@ -199,6 +200,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         'wind_dir': 'windDir',
         'temperature': 'outTemp',
         'humidity': 'outHumidity',
+        'in_humidity': 'inHumidity',
         'rain_count': 'rain',
         # To use a rainRate calculation from this driver that closely matches
         # that of a Davis station, uncomment the rainRate field then specify
@@ -770,8 +772,12 @@ class Meteostick(object):
             data['rf_signal'] = 0  # not available
             data['rf_missed'] = 0  # not available
             if n >= 6:
-                data['in_temp'] = float(parts[3]) / 10.0 # C
-                data['pressure'] = float(parts[4]) / 100.0 # hPa
+                in_temp = float(parts[3]) / 10.0 # C
+                data['in_temp'] = conv.convert((in_temp, 'degree_C', 'group_temperature'))[0]
+                pressure = float(parts[4]) / 100.0 # hPa
+                data['pressure'] = conv.convert((pressure, 'mbar', 'group_pressure'))[0]
+                if n > 7:
+                    data['in_humidity'] = float(parts[7]) # only with custom receiver
             else:
                 logerr("B: not enough parts (%s) in '%s'" % (n, raw))
         elif parts[0] == 'I':
