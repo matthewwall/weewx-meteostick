@@ -1294,7 +1294,7 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
             "--set-channel", dest="channel", metavar="X", type=int,
             help="set channel: 0-255; default 255")
         parser.add_option(
-            "--set-channel", dest="format", metavar="X", type=int,
+            "--set-format", dest="format", metavar="X", type=int,
             help="set format: 0=raw, 1=machine, 2=human")
 
     def do_options(self, options, parser, config_dict, prompt):
