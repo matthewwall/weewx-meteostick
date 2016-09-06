@@ -49,9 +49,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.40'
-
-MPH_TO_MPS = 0.44704 # mph to m/s
+DRIVER_VERSION = '0.42'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -93,7 +91,7 @@ def dbg_parse(verbosity, msg):
 
 # default temperature for soil moisture and leaf wetness sensors that
 # do not have a temperature sensor.
-# Also used to normalize raw values for a stanard temperature.
+# Also used to normalize raw values for a standard temperature.
 DEFAULT_SOIL_TEMP = 24 # C
 
 RAW = 0  # indices of table with raw values
@@ -259,6 +257,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         self.max_tries = int(stn_dict.get('max_tries', 10))
         self.retry_wait = int(stn_dict.get('retry_wait', 10))
         self.last_rain_count = None
+        self.first_rf_stats = True
         self._init_rf_stats()
 
         self.station = Meteostick(**stn_dict)
@@ -377,6 +376,9 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                     self.rf_stats['pctgood'][ch] = \
                         int(0.5 + 100.0 * self.rf_stats['cnt'][ch] /
                             (self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch]))
+                    if -self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['missed'][ch] > 0:
+                        loginf('WARNING: rf_sensitivity (%s) might be too low for channel %s (%s signals missed)'
+                               % (self.station.rfs, ch, self.rf_stats['missed'][ch]))
         else:
             # machine format
             self.rf_stats['pctgood'][self.station.channels['iss']] = self.rf_stats['avg'][MACHINE_CHANNEL]
@@ -398,7 +400,12 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
 
     def _report_channel(self, label, ch, raw_format):
         if raw_format:
-            logdbg("%s %5d %5d %5d %5d %5d %7d      %s" %
+            if self.rf_stats['pctgood'][ch] is None \
+                    or (-self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['pctgood'][ch] < 85):
+                msg = "WARNING: rf_sensitivity might be too low for this channel"
+            else:
+                msg = ""
+            logdbg("%s %5d %5d %5d %5d %5d %7d      %s   %s" %
                    (label.ljust(15),
                     self.rf_stats['max'][ch],
                     self.rf_stats['min'][ch],
@@ -406,7 +413,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                     self.rf_stats['last'][ch],
                     self.rf_stats['cnt'][ch],
                     self.rf_stats['missed'][ch],
-                    self.rf_stats['pctgood'][ch]))
+                    self.rf_stats['pctgood'][ch],
+                    msg))
         else:
             logdbg("%s %5d %5d %5d %5d %5d" %
                    (label.ljust(15),
@@ -418,10 +426,13 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
 
     def new_archive_record(self, event):
         self._update_rf_summaries()  # calculate rf summaries
-        event.record['rxCheckPercent'] = self.rf_stats['pctgood'][self.station.channels['iss']]
+        # Don't store the firsts results after startup; the data is not complete
+        if not self.first_rf_stats:
+            event.record['rxCheckPercent'] = self.rf_stats['pctgood'][self.station.channels['iss']]
+            logdbg("data['rxCheckPercent']: %s" % event.record['rxCheckPercent'])
+        self.first_rf_stats = False
         if DEBUG_RFS:
             self._report_rf_stats()
-        logdbg("data['rxCheckPercent']: %s" % event.record['rxCheckPercent'])
         self._init_rf_stats()  # flush rf statistics
 
 
@@ -776,6 +787,8 @@ class Meteostick(object):
                 data['in_temp'] = conv.convert((in_temp, 'degree_C', 'group_temperature'))[0]
                 pressure = float(parts[4]) / 100.0 # hPa
                 data['pressure'] = conv.convert((pressure, 'mbar', 'group_pressure'))[0]
+                dbg_parse(2, "pressure inHg=%s hPa=%s" %
+                          (data['pressure'], pressure))
                 if n > 7:
                     data['in_humidity'] = float(parts[7]) # only with custom receiver
             else:
@@ -802,11 +815,16 @@ class Meteostick(object):
                 dbg_parse(3, "channel %s missed %s" %
                           (data['channel'], data['rf_missed']))
 
-            if data['channel'] == iss_ch or data['channel'] == wind_ch:
+            if data['channel'] == iss_ch or data['channel'] == wind_ch \
+                    or data['channel'] == th1_ch or data['channel'] == th2_ch:
                 if data['channel'] == iss_ch:
                     data['bat_iss'] = battery_low
-                else:
+                elif data['channel'] == wind_ch:
                     data['bat_anemometer'] = battery_low
+                elif data['channel'] == th1_ch:
+                    data['bat_th_1'] = battery_low
+                else:
+                    data['bat_th_2'] = battery_low
                 # Each data packet of iss or anemometer contains wind info,
                 # but it is only valid when received from the channel with
                 # the anemometer connected
@@ -831,7 +849,12 @@ class Meteostick(object):
                               (wind_speed_raw, wind_dir_raw))
 
                     # Vantage Pro and Pro2
-                    wind_dir_pro = 9.0 + (wind_dir_raw - 1) * 342.0 / 255.0
+                    if wind_dir_raw == 0:
+                        wind_dir_pro = 5.0
+                    elif wind_dir_raw == 255:
+                        wind_dir_pro = 355.0
+                    else:
+                        wind_dir_pro = 9.0 + (wind_dir_raw - 1) * 342.0 / 253.0
 
                     # Vantage Vue
                     wind_dir_vue = wind_dir_raw * 1.40625 + 0.3
@@ -839,9 +862,9 @@ class Meteostick(object):
                     # wind error correction is by raw byte values
                     wind_speed_ec = round(Meteostick.calc_wind_speed_ec(wind_speed_raw, wind_dir_raw))
 
-                    data['wind_speed'] = wind_speed_ec # * MPH_TO_MPS
+                    data['wind_speed'] = wind_speed_ec
                     data['wind_dir'] = wind_dir_pro
-                    data['wind_speed_raw'] = wind_speed_raw # * MPH_TO_MPS
+                    data['wind_speed_raw'] = wind_speed_raw
 
                     dbg_parse(2, "WS=%s WSEC=%s WDECRAW=%s WD=%s WD_vue=%s" %
                               (wind_speed_raw, wind_speed_ec,
@@ -946,9 +969,10 @@ class Meteostick(object):
                     temp_f_raw = (pkt[3] << 4) + (pkt[4] >> 4)
                     if temp_f_raw != 0xFFC:
                         temp_f = temp_f_raw / 10.0
+                        temp_c = weewx.wxformulas.FtoC(temp_f) # C
                         data['temperature'] = temp_f
                         dbg_parse(2, "temp_f_raw=0x%03x temp_f=%s temp_c=%s"
-                                  % (temp_f_raw, temp_f, data['temperature']))
+                                  % (temp_f_raw, temp_f, temp_c))
                 elif message_type == 9:
                     # 10-min average wind gust
                     # message examples:
@@ -972,12 +996,13 @@ class Meteostick(object):
                         dbg_parse(2, "humidity_raw=0x%03x value=%s" %
                                   (humidity_raw, data['humidity']))
                 elif message_type == 0xC:
-                    # unknown ATK message
+                    # unknown message
                     # message example:
                     # I 101 C1 4 D0 0 1 0 E9 A4  -69 2624968 56
                     # As we have seen after one day of received data
-                    # pkt[3] and pkt[5] are always zero; pckt[4] has values 0-3
-                    dbg_parse(3, "unknown_atk pkt[3]=0x%02x pkt[4]=0x%02x pkt[5]=0x%02x" %
+                    # pkt[3] and pkt[5] are always zero;
+                    # pckt[4] has values 0-3 (ATK) or 5 (temp/hum)
+                    dbg_parse(3, "unknown pkt[3]=0x%02x pkt[4]=0x%02x pkt[5]=0x%02x" %
                               (pkt[3], pkt[4], pkt[5]))
                 elif message_type == 0xE:
                     # rain
@@ -1049,18 +1074,6 @@ class Meteostick(object):
 
                     else:
                         logerr("unknown subtype '%s' in '%s'" % (data_subtype, raw))
-
-            elif data['channel'] == th1_ch or data['channel'] == th2_ch:
-                # themro/hygro station
-                        # message examples:
-                        # TODO
-                        # TODO (no sensor)
-                if data['channel'] == th1_ch:
-                    data['bat_th_1'] = battery_low
-                else:
-                    data['bat_th_2'] = battery_low
-                dbg_parse(2, "data from thermo/hygro channel: %s, raw message: %s" % (data['channel'], raw))
-                # TODO find out message protocol of thermo/hygro station
 
             else:
                 logerr("unknown station with channel: %s, raw message: %s" %
@@ -1283,7 +1296,10 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
             help="set led mode: 1=high 0=low; default low")
         parser.add_option(
             "--set-bandwidth", dest="bandwidth", metavar="X", type=int,
-            help="set bandwidth: 0=narrow, 1=width; default narrow")
+            help="set bandwidth: "
+                 "0=narrow: best for Davis sensors, "
+                 "1=normal: for reading retransmitted packets, "
+                 "2=wide: for Ambient stations); default narrow")
         parser.add_option(
             "--set-probe", dest="probe", metavar="X", type=int,
             help="set probe: 0=off, 1=on; default off")

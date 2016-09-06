@@ -1,5 +1,15 @@
-0.04 09jun2016
+0.42 31aug2016
+* Fixed: logic for raw signals of temp/hum stations
+* Changed: formula for wind_dir_raw
+* Changed: pct_good not sent to weewx at first (not full) archive period 
+* Added: rf_sensitivity too low warnings
 
+0.41 08jul2016
+* Added: custom receiver inHumidity support and other small fixes
+* Added: wind error correction code and associated metric system change
+* Fixed: Solar "sensor missing" fix by Luc
+
+0.40 09jun2016
 * Added: routine new_archive_record 
 * Changed: handling of rf_stats moved to new_archive_record
 * Changed: SM-MAP and LW_map settings
