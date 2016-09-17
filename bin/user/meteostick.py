@@ -49,7 +49,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.42'
+DRIVER_VERSION = '0.43'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -970,7 +970,12 @@ class Meteostick(object):
                     if temp_f_raw != 0xFFC:
                         temp_f = temp_f_raw / 10.0
                         temp_c = weewx.wxformulas.FtoC(temp_f) # C
-                        data['temperature'] = temp_f
+                        if data['channel'] == th1_ch:
+                            data['temp_1'] = temp_f
+                        elif data['channel'] == th2_ch:
+                            data['temp_2'] = temp_f
+                        else:
+                            data['temperature'] = temp_f
                         dbg_parse(2, "temp_f_raw=0x%03x temp_f=%s temp_c=%s"
                                   % (temp_f_raw, temp_f, temp_c))
                 elif message_type == 9:
@@ -986,13 +991,19 @@ class Meteostick(object):
                         # don't store the 10-min gust data because there is no
                         # field for it reserved in the standard wview schema
                 elif message_type == 0xA:
-                    # humidity
+                    # outside humidity
                     # message examples:
                     # I 101 A0 0 0 C9 3D 0 2A 87  -76 2562432 54
                     # I 100 A1 0 DB 0 3 0 47 C7  -67 5249932 -130 (no sensor)
                     humidity_raw = ((pkt[4] >> 4) << 8) + pkt[3]
                     if humidity_raw != 0:
-                        data['humidity'] = humidity_raw / 10.0
+                        humidity = humidity_raw / 10.0
+                        if data['channel'] == th1_ch:
+                            data['humid_1'] = humidity
+                        elif data['channel'] == th2_ch:
+                            data['humid_2'] = humidity
+                        else:
+                            data['humidity'] = humidity
                         dbg_parse(2, "humidity_raw=0x%03x value=%s" %
                                   (humidity_raw, data['humidity']))
                 elif message_type == 0xC:
