@@ -1,3 +1,7 @@
+0.45 29sep2016
+* eliminate unecessary unit conversions
+* simplify some code
+
 0.44 29sep2016
 * Fixed: output machine readable values in US format
 * Added: automatic selection of digital and analog temp sensors
