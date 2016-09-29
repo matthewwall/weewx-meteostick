@@ -35,6 +35,8 @@ supports the machine and raw formats.  The raw format provides more data and
 seems to result in higher quality readings, so it is the default.
 """
 
+# FIXME: eliminate the service component - there is no need to bind to events
+
 from __future__ import with_statement
 import math
 import serial
@@ -110,32 +112,29 @@ LW_MAP = {RAW: (857.0, 864.0, 895.0, 911.0, 940.0, 952.0, 991.0, 1013.0),
           POT: ( 15.0,  14.0,   5.0,   4.0,   3.0,   2.0,   1.0,    0.0)}
 
 
-def calculate_thermistor_temp(thermistor_temp_raw):
+def calculate_thermistor_temp(temp_raw):
     """ Decode the raw thermistor temperature, then calculate the actual
     thermistor temperature and the leaf_soil potential, using Davis' formulas.
-    When the sensor is not populated, thermistor_temp_raw and
-    leaf_soil_potential_raw are set to their max values (0x3ff).
     see: https://github.com/cmatteri/CC1101-Weather-Receiver/wiki/Soil-Moisture-Station-Protocol
-    :param thermistor_temp_raw: raw value of sensor temp of both leaf wetness
-                               and soil moisture sensors.
+    :param temp_raw: raw value from sensor for leaf wetness and soil moisture
     """
 
-    # Convert thermistor_temp_raw to a resistance (R) in kiloOhms
+    # Convert temp_raw to a resistance (R) in kiloOhms
     a = 18.81099
     b = 0.0009988027
-    r = a / (1.0 / thermistor_temp_raw - b) / 1000 # k ohms
+    r = a / (1.0 / temp_raw - b) / 1000 # k ohms
 
     # Steinhart-Hart parameters
     s1 = 0.002783573
     s2 = 0.0002509406
     try:
         thermistor_temp = 1 / (s1 + s2 * math.log(r)) - 273
-        dbg_parse(3, 'r (k ohm) %s thermistor_temp_raw %s thermistor_temp %s' %
-                  (r, thermistor_temp_raw, thermistor_temp))
+        dbg_parse(3, 'r (k ohm) %s temp_raw %s thermistor_temp %s' %
+                  (r, temp_raw, thermistor_temp))
         return thermistor_temp
     except ValueError, e:
-        logerr('thermistor_temp failed for thermistor_temp_raw %s r (k ohm) %s'
-               'error: %s' % (thermistor_temp_raw, r, e))
+        logerr('thermistor_temp failed for temp_raw %s r (k ohm) %s'
+               'error: %s' % (temp_raw, r, e))
     return DEFAULT_SOIL_TEMP
 
 
@@ -986,10 +985,10 @@ class Meteostick(object):
                                       % (temp_raw, temp_f, temp_c))
                         else:
                             # analog sensor (thermistor)
-                            temp_f = temp_raw / 4  # 10-bits temp value
-                            temp_c = calculate_thermistor_temp(temp_f)
-                            dbg_parse(2, "thermistor temp_raw=0x%03x temp_f=%s temp_c=%s"
-                                      % (temp_raw, temp_f, temp_c))
+                            temp_raw = temp_raw / 4  # 10-bits temp value
+                            temp_c = calculate_thermistor_temp(temp_raw)
+                            dbg_parse(2, "thermistor temp_raw=0x%03x temp_c=%s"
+                                      % (temp_raw, temp_c))
                         if data['channel'] == th1_ch:
                             data['temp_1'] = temp_c
                         elif data['channel'] == th2_ch:
