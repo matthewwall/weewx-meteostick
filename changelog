@@ -1,3 +1,8 @@
+0.44 29sep2016
+* Fixed: output machine readable values in US format
+* Added: automatic selection of digital and analog temp sensors
+* Fixed: logic for analog temp sensors
+
 0.43 17sep2016
 * Fixed: logic for outside temperature readings
 

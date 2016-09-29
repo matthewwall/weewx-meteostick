@@ -5,6 +5,7 @@
 # Copyright 2016 Matthew Wall, Luc Heijst
 #
 # Thanks to Frank Bandle for testing during the development of this driver.
+# Thanks to kobuki for validation, testing, and general sanity checks.
 #
 # This program is free software: you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
@@ -49,7 +50,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.43'
+DRIVER_VERSION = '0.44'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -108,32 +109,32 @@ LW_MAP = {RAW: (857.0, 864.0, 895.0, 911.0, 940.0, 952.0, 991.0, 1013.0),
           POT: ( 15.0,  14.0,   5.0,   4.0,   3.0,   2.0,   1.0,    0.0)}
 
 
-def calculate_leaf_soil_temp(leaf_soil_temp_raw):
-    """ Decode the raw leaf-soil temperature, then calculate the actual
-    leaf-soil temperature and the leaf_soil potential, using Davis' formulas.
-    When the sensor is not populated, leaf_soil_temp_raw and
+def calculate_thermistor_temp(thermistor_temp_raw):
+    """ Decode the raw thermistor temperature, then calculate the actual
+    thermistor temperature and the leaf_soil potential, using Davis' formulas.
+    When the sensor is not populated, thermistor_temp_raw and
     leaf_soil_potential_raw are set to their max values (0x3ff).
     see: https://github.com/cmatteri/CC1101-Weather-Receiver/wiki/Soil-Moisture-Station-Protocol
-    :param leaf_soil_temp_raw: raw value of sensor temp of both leaf wetness
+    :param thermistor_temp_raw: raw value of sensor temp of both leaf wetness
                                and soil moisture sensors.
     """
 
-    # Convert leaf_soil_temp_raw to a resistance (R) in kiloOhms
+    # Convert thermistor_temp_raw to a resistance (R) in kiloOhms
     a = 18.81099
     b = 0.0009988027
-    r = a / (1.0 / leaf_soil_temp_raw - b) / 1000 # k ohms
+    r = a / (1.0 / thermistor_temp_raw - b) / 1000 # k ohms
 
     # Steinhart-Hart parameters
     s1 = 0.002783573
     s2 = 0.0002509406
     try:
-        leaf_soil_temp = 1 / (s1 + s2 * math.log(r)) - 273
-        dbg_parse(3, 'r (k ohm) %s leaf_soil_temp_raw %s leaf_soil_temp %s' %
-                  (r, leaf_soil_temp_raw, leaf_soil_temp))
-        return leaf_soil_temp
+        thermistor_temp = 1 / (s1 + s2 * math.log(r)) - 273
+        dbg_parse(3, 'r (k ohm) %s thermistor_temp_raw %s thermistor_temp %s' %
+                  (r, thermistor_temp_raw, thermistor_temp))
+        return thermistor_temp
     except ValueError, e:
-        logerr('leaf_soil_temp failed for leaf_soil_temp_raw %s r (k ohm) %s'
-               'error: %s' % (leaf_soil_temp_raw, r, e))
+        logerr('thermistor_temp failed for thermistor_temp_raw %s r (k ohm) %s'
+               'error: %s' % (thermistor_temp_raw, r, e))
     return DEFAULT_SOIL_TEMP
 
 
@@ -659,6 +660,7 @@ class Meteostick(object):
         # parse the 'machine' format
         # message example:
         # W 3 0.00 261 -53 L
+        conv = weewx.units.Converter()
         data = dict()
         parts = Meteostick.get_parts(raw)
         n = len(parts)
@@ -670,8 +672,10 @@ class Meteostick(object):
             # B 35.2 1023.57
             # B 35.2 1023.57 65%
             if n >= 3:
-                data['in_temp'] = float(parts[1]) # C
-                data['pressure'] = float(parts[2]) # hPa
+                in_temp = float(parts[1]) # C
+                data['in_temp'] = conv.convert((in_temp, 'degree_C', 'group_temperature'))[0]
+                pressure = float(parts[2]) # hPa
+                data['pressure'] = conv.convert((pressure, 'mbar', 'group_pressure'))[0]
                 if n >= 4:
                     data['channel'] = MACHINE_CHANNEL
                     data['rf_signal'] = float(parts[3].strip('%'))
@@ -695,17 +699,19 @@ class Meteostick(object):
                     data['wind_speed'] = float(parts[2]) # m/s
                     data['wind_dir'] = float(parts[3]) # degrees
                 elif parts[0] == 'T':
+                    temp_c = float(parts[2]) # C
+                    temp_conv = conv.convert((temp_c, 'degree_C', 'group_temperature'))[0]
                     if th1_ch != 0 and data['channel'] == th1_ch:
                         data['bat_th_1'] = bat
-                        data['temp_1'] = float(parts[2]) # C
+                        data['temp_1'] = temp_conv
                         data['humid_1'] = float(parts[3]) # %
                     elif th2_ch != 0 and data['channel'] == th2_ch:
                         data['bat_th_2'] = bat
-                        data['temp_2'] = float(parts[2]) # C
+                        data['temp_2'] = temp_conv
                         data['humid_2'] = float(parts[3]) # %
                     else:
                         data['bat_iss'] = bat
-                        data['temperature'] = float(parts[2]) # C
+                        data['temperature'] = temp_conv
                         data['humidity'] = float(parts[3]) # %
             else:
                 logerr("WT: not enough parts (%s) in '%s'" % (n, raw))
@@ -722,16 +728,20 @@ class Meteostick(object):
                     # bug: the zero values of not connected leaf wetness
                     # sensors are also given
                     data['leaf_wetness_%s' % parts[2]] = float(parts[3]) # 0-15
-                    dbg_parse(2, "leaf_wetness_%s=%s" % (parts[2], float(parts[3])))
+                    dbg_parse(2, "leaf_wetness_%s=%s" %
+                              (parts[2], float(parts[3])))
                 elif parts[0] == 'M':
                     data['soil_moisture_%s' % parts[2]] = float(parts[3]) # cbar 0-200
-                    dbg_parse(2, "soil_moisture_%s=%s" % (parts[2], float(parts[3])))
+                    dbg_parse(2, "soil_moisture_%s=%s" %
+                              (parts[2], float(parts[3])))
                 elif parts[0] == 'O':
-                    data['soil_temp_%s' % parts[2]] = float(parts[3])  # C
+                    temp_c = float(parts[3]) # C
+                    temp_conv = conv.convert((temp_c, 'degree_C', 'group_temperature'))[0]
+                    data['soil_temp_%s' % parts[2]] = temp_conv
                     # When connected to ports 1 and 2 the temp sensor is also
                     # used for the leaf wetness temperatures
                     if int(parts[2]) <= 2:
-                        data['leaf_temp_%s' % parts[2]] = float(parts[3])  # C
+                        data['leaf_temp_%s' % parts[2]] = temp_conv
                         dbg_parse(2, "soil- and leaf_temp_%s=%s" % (parts[2], float(parts[3])))
                     else:
                         dbg_parse(2, "soil_temp_%s=%s" % (parts[2], float(parts[3])))
@@ -964,20 +974,31 @@ class Meteostick(object):
                 elif message_type == 8:
                     # outside temperature
                     # message examples:
-                    # I 103 80 0 0 33 8D 0 25 11  -78 2562444 -25
+                    # I 103 80 0 0 33 8D 0 25 11  -78 2562444 -25 (digital temp)
+
+                    # I 100 81 0 0 59 45 0 A3 E6  -89 2624956 -42 (analog temp)
                     # I 104 81 0 DB FF C3 0 AB F8  -66 2624980 125 (no sensor)
-                    temp_f_raw = (pkt[3] << 4) + (pkt[4] >> 4)
-                    if temp_f_raw != 0xFFC:
-                        temp_f = temp_f_raw / 10.0
-                        temp_c = weewx.wxformulas.FtoC(temp_f) # C
+                    temp_raw = (pkt[3] << 4) + (pkt[4] >> 4)  # 12-bits temp value
+                    if temp_raw != 0xFFC:
+                        if pkt[4] & 0x8:
+                            # digital temp sensor
+                            temp_f = temp_raw / 10.0
+                            temp_c = weewx.wxformulas.FtoC(temp_f) # C
+                            dbg_parse(2, "digital temp_f_raw=0x%03x temp_f=%s temp_c=%s"
+                                      % (temp_raw, temp_f, temp_c))
+                        else:
+                            # analog sensor (thermistor)
+                            temp_raw = temp_raw / 4  # 10-bits temp value
+                            temp_c = calculate_thermistor_temp(temp_raw)
+                            temp_f = conv.convert((temp_c, 'degree_C', 'group_temperature'))[0]
+                            dbg_parse(2, "thermistor temp_f_raw=0x%03x temp_f=%s temp_c=%s"
+                                      % (temp_raw, temp_f, temp_c))
                         if data['channel'] == th1_ch:
                             data['temp_1'] = temp_f
                         elif data['channel'] == th2_ch:
                             data['temp_2'] = temp_f
                         else:
                             data['temperature'] = temp_f
-                        dbg_parse(2, "temp_f_raw=0x%03x temp_f=%s temp_c=%s"
-                                  % (temp_f_raw, temp_f, temp_c))
                 elif message_type == 9:
                     # 10-min average wind gust
                     # message examples:
@@ -1052,7 +1073,7 @@ class Meteostick(object):
                         # I 104 F2 29 FF FF C0 C0 F1 EC  -52 2687408 124 (no sensor)
                         if pkt[3] != 0xFF:
                             # soil moisture temperature
-                            leaf_soil_temp = calculate_leaf_soil_temp(leaf_soil_temp_raw)
+                            leaf_soil_temp = calculate_thermistor_temp(leaf_soil_temp_raw)
                             dbg_parse(2, "soil_temp_%s_raw=0x%03x (%s)" %
                                       (sensor_num, leaf_soil_temp, leaf_soil_temp))
                             data['soil_temp_%s' % sensor_num] = conv.convert((leaf_soil_temp, 'degree_C', 'group_temperature'))[0]
@@ -1071,7 +1092,7 @@ class Meteostick(object):
                         # I 101 F2 2A 0 FF 40 C0 4F 5  -52 2687404 43 (no sensor)
                         if pkt[3] != 0xFF:
                             # leaf wetness temperature
-                            leaf_soil_temp = calculate_leaf_soil_temp(leaf_soil_temp_raw)
+                            leaf_soil_temp = calculate_thermistor_temp(leaf_soil_temp_raw)
                             dbg_parse(2, "leaf_temp_%s_raw=0x%03x (%s)" %
                                       (sensor_num, leaf_soil_temp, leaf_soil_temp))
                             data['leaf_temp_%s' % sensor_num] = conv.convert((leaf_soil_temp, 'degree_C', 'group_temperature'))[0]
