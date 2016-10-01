@@ -741,8 +741,6 @@ class Meteostick(object):
                         data['leaf_temp_%s' % parts[2]] = temp_c
                         dbg_parse(2, "leaf_temp_%s=%s" %
                                   (parts[2], float(parts[3])))
-                    else:
-
             else:
                 logerr("LMO: not enough parts (%s) in '%s'" % (n, raw))
         elif parts[0] in 'RSUP':
@@ -870,7 +868,7 @@ class Meteostick(object):
                     data['wind_dir'] = wind_dir_pro
                     data['wind_speed'] = wind_speed_ec * MPH_TO_MPS
                     dbg_parse(2, "WS=%s WD=%s WS_raw=%s WS_ec=%s WD_raw=%s WD_pro=%s WD_vue=%s" %
-                              (wind_speed, wind_dir,
+                              (data['wind_speed'], data['wind_dir'],
                                wind_speed_raw, wind_speed_ec,
                                wind_dir_raw if wind_dir_raw <= 180 else 360 - wind_dir_raw,
                                wind_dir_pro, wind_dir_vue))
