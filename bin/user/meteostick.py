@@ -155,11 +155,11 @@ def lookup_potential(sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
     sensor_raw_norm = sensor_raw * (1 + norm_fact * (sensor_temp - DEFAULT_SOIL_TEMP))
 
     numcols = len(lookup[RAW])
-    if sensor_raw_norm >= lookup[RAW][numcols-1]:
-        potential = lookup[POT][numcols-1] # preset potential to last value
+    if sensor_raw_norm >= lookup[RAW][numcols - 1]:
+        potential = lookup[POT][numcols - 1] # preset potential to last value
         dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s >= RAW=%s" %
                   (sensor_name, sensor_temp, norm_fact, sensor_raw,
-                   sensor_raw_norm, potential, lookup[RAW][numcols-1]))
+                   sensor_raw_norm, potential, lookup[RAW][numcols - 1]))
     else:
         potential = lookup[POT][0] # preset potential to first value
         # lookup sensor_raw_norm value in table
@@ -173,7 +173,7 @@ def lookup_potential(sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
                     break
                 else:
                     # determine the potential value
-                    potential_per_raw =  (lookup[POT][x] - lookup[POT][x - 1]) / (lookup[RAW][x] - lookup[RAW][x - 1])
+                    potential_per_raw = (lookup[POT][x] - lookup[POT][x - 1]) / (lookup[RAW][x] - lookup[RAW][x - 1])
                     potential_offset = (sensor_raw_norm - lookup[RAW][x - 1]) * potential_per_raw
                     potential = lookup[POT][x - 1] + potential_offset
                     dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s RAW=%s to %s POT=%s to %s " %
@@ -269,7 +269,6 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         # stats on each archive record.
         if engine:
             self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
-
 
     def closePort(self):
         if self.station is not None:
@@ -982,7 +981,7 @@ class Meteostick(object):
                                       % (temp_raw, temp_f, temp_c))
                         else:
                             # analog sensor (thermistor)
-                            temp_raw = temp_raw / 4  # 10-bits temp value
+                            temp_raw /= 4  # 10-bits temp value
                             temp_c = calculate_thermistor_temp(temp_raw)
                             dbg_parse(2, "thermistor temp_raw=0x%03x temp_c=%s"
                                       % (temp_raw, temp_c))
