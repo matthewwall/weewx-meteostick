@@ -1,3 +1,6 @@
+0.46 07nov2016
+* use the database_field = hardware_name pattern for sensor map
+
 0.45 29sep2016
 * eliminate unecessary unit conversions
 * simplify some code
