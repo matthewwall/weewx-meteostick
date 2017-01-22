@@ -1,3 +1,6 @@
+0.47 22jan2017
+* user-specified map augments the default instead of replacing it
+
 0.46 07nov2016
 * use the database_field = hardware_name pattern for sensor map
 

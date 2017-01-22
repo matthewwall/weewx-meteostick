@@ -52,7 +52,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.45'
+DRIVER_VERSION = '0.46'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -252,7 +252,9 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
             raise ValueError("unsupported rain bucket type %s" % bucket_type)
         self.rain_per_tip = 0.0254 if bucket_type == 0 else 0.2 # mm
         loginf('using rain_bucket_type %s' % bucket_type)
-        self.sensor_map = stn_dict.get('sensor_map', self.DEFAULT_SENSOR_MAP)
+        self.sensor_map = dict(self.DEFAULT_SENSOR_MAP)
+        if 'sensor_map' in stn_dict:
+            self.sensor_map.update(stn_dict['sensor_map'])
         loginf('sensor map is: %s' % self.sensor_map)
         self.max_tries = int(stn_dict.get('max_tries', 10))
         self.retry_wait = int(stn_dict.get('retry_wait', 10))
