@@ -1,3 +1,6 @@
+0.48 18mar2017
+* deal with bogus characters in readings
+
 0.47 22jan2017
 * user-specified map augments the default instead of replacing it
 

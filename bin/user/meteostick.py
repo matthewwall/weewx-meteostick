@@ -52,7 +52,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.46'
+DRIVER_VERSION = '0.48'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -92,6 +92,10 @@ def dbg_parse(verbosity, msg):
     if DEBUG_PARSE >= verbosity:
         logdbg(msg)
 
+def _fmt(data):
+    if not data:
+        return ''
+    return ' '.join(['%02x' % ord(x) for x in data])
 
 # default temperature for soil moisture and leaf wetness sensors that
 # do not have a temperature sensor.
@@ -636,6 +640,11 @@ class Meteostick(object):
         data = dict()
         if not raw:
             return data
+        printable = set(string.printable)
+        fdata = filter(lambda x: x in printable, raw)
+        if fdata != raw:
+            logerr("unprintable characters in readings: %s" % _fmt(raw))
+            return data
         try:
             if self.output_format == 'raw':
                 data = self.parse_raw(raw,
@@ -652,7 +661,6 @@ class Meteostick(object):
                                           self.channels['temp_hum_2'])
         except ValueError, e:
             logerr("parse failed for '%s': %s" % (raw, e))
-            data = dict() # do not return partial data
         return data
 
     @staticmethod
@@ -770,10 +778,10 @@ class Meteostick(object):
                     data['solar_power'] = float(parts[2])  # 0-100
             else:
                 logerr("RSUP: not enough parts (%s) in '%s'" % (n, raw))
-        elif parts[0] in '#':
+        elif parts[0] == '#':
             loginf("%s" % raw)
         else:
-            logerr("unknown sensor identifier '%s' in '%s'" % (parts[0], raw))
+            logerr("unknown sensor identifier '%s' in %s" % (parts[0], raw))
         return data
 
     @staticmethod
@@ -1108,10 +1116,10 @@ class Meteostick(object):
             else:
                 logerr("unknown station with channel: %s, raw message: %s" %
                        (data['channel'], raw))
-        elif parts[0] in '#':
+        elif parts[0] == '#':
             loginf("%s" % raw)
         else:
-            logerr("unknown sensor identifier '%s' in '%s'" % (parts[0], raw))
+            logerr("unknown sensor identifier '%s' in %s" % (parts[0], raw))
         return data
 
     # Normalize and interpolate raw wind values at raw angles
