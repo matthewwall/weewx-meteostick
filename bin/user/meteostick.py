@@ -52,7 +52,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.48'
+DRIVER_VERSION = '0.49'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -305,10 +305,6 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         for k in self.sensor_map:
             if self.sensor_map[k] in data:
                 packet[k] = data[self.sensor_map[k]]
-        if len(packet) <= 1:
-            # No data found, only the batteryStatus of the non-present sensor
-            dbg_parse(2, "skip packet for data: %s" % data)
-            return None
         # convert the rain count to a rain delta measure
         if 'rain_count' in data:
             if self.last_rain_count is not None:
@@ -325,6 +321,10 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
             if DEBUG_RAIN:
                 logdbg("rain=%s rain_count=%s last_rain_count=%s" %
                        (packet['rain'], rain_count, self.last_rain_count))
+        elif len(packet) <= 1:
+            # No data found
+            dbg_parse(2, "skip packet for data: %s" % data)
+            return None
         packet['dateTime'] = int(time.time() + 0.5)
         packet['usUnits'] = weewx.METRICWX
         return packet
