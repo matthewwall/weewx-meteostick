@@ -52,7 +52,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.49'
+DRIVER_VERSION = '0.50'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -1028,7 +1028,7 @@ class Meteostick(object):
                         else:
                             data['humidity'] = humidity
                         dbg_parse(2, "humidity_raw=0x%03x value=%s" %
-                                  (humidity_raw, data['humidity']))
+                                  (humidity_raw, humidity))
                 elif message_type == 0xC:
                     # unknown message
                     # message example:
