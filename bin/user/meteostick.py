@@ -31,8 +31,8 @@ noise).  Values lower than 50 likely result in no readings at all.
 
 The meteostick outputs data in one of 3 formats: human-readable, machine, and
 raw.  The machine format is, in fact, human-readable as well.  This driver
-supports the machine and raw formats.  The raw format provides more data and
-seems to result in higher quality readings, so it is the default.
+supports only the raw format.  The raw format provides more data and
+seems to result in higher quality readings.
 """
 
 # FIXME: eliminate the service component - there is no need to bind to events
@@ -52,7 +52,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.50'
+DRIVER_VERSION = '0.58'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -161,7 +161,7 @@ def lookup_potential(sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
     numcols = len(lookup[RAW])
     if sensor_raw_norm >= lookup[RAW][numcols - 1]:
         potential = lookup[POT][numcols - 1] # preset potential to last value
-        dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s >= RAW=%s" %
+        dbg_parse(3, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s >= RAW=%s" %
                   (sensor_name, sensor_temp, norm_fact, sensor_raw,
                    sensor_raw_norm, potential, lookup[RAW][numcols - 1]))
     else:
@@ -171,7 +171,7 @@ def lookup_potential(sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
             if sensor_raw_norm < lookup[RAW][x]:
                 if x == 0:
                     # 'pre zero' phase; potential = first value
-                    dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s < RAW=%s" %
+                    dbg_parse(3, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s < RAW=%s" %
                               (sensor_name, sensor_temp, norm_fact, sensor_raw,
                                sensor_raw_norm, potential, lookup[RAW][0]))
                     break
@@ -180,7 +180,7 @@ def lookup_potential(sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
                     potential_per_raw = (lookup[POT][x] - lookup[POT][x - 1]) / (lookup[RAW][x] - lookup[RAW][x - 1])
                     potential_offset = (sensor_raw_norm - lookup[RAW][x - 1]) * potential_per_raw
                     potential = lookup[POT][x - 1] + potential_offset
-                    dbg_parse(2, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s RAW=%s to %s POT=%s to %s " %
+                    dbg_parse(3, "%s: temp=%s fact=%s raw=%s norm=%s potential=%s RAW=%s to %s POT=%s to %s " %
                               (sensor_name, sensor_temp, norm_fact, sensor_raw,
                                sensor_raw_norm, potential,
                                lookup[RAW][x - 1], lookup[RAW][x],
@@ -190,7 +190,6 @@ def lookup_potential(sensor_name, norm_fact, sensor_raw, sensor_temp, lookup):
 
 
 RAW_CHANNEL = 0  # unused channel for the receiver stats in raw format
-MACHINE_CHANNEL = 9  # fake channel for the receiver stats in machine format
 
 
 class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
@@ -225,6 +224,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         'leafTemp2': 'leaf_temp_2',
         'extraTemp1': 'temp_1',
         'extraTemp2': 'temp_2',
+        'extraTemp3': 'temp_3',
         'extraHumid1': 'humid_1',
         'extraHumid2': 'humid_2',
         'txBatteryStatus': 'bat_iss',
@@ -290,13 +290,14 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
             readings = self.station.get_readings_with_retry(self.max_tries,
                                                             self.retry_wait)
             data = self.station.parse_readings(readings, self.rain_per_tip)
-            if data:
+            if 'channel' in data:
                 self._update_rf_stats(data['channel'], data['rf_signal'],
                                       data['rf_missed'])
+            if data:
                 dbg_parse(2, "data: %s" % data)
                 packet = self._data_to_packet(data)
                 if packet is not None:
-                    dbg_parse(2, "packet: %s" % packet)
+                    dbg_parse(3, "packet: %s" % packet)
                     yield packet
 
     def _data_to_packet(self, data):
@@ -323,7 +324,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                        (packet['rain'], rain_count, self.last_rain_count))
         elif len(packet) <= 1:
             # No data found
-            dbg_parse(2, "skip packet for data: %s" % data)
+            dbg_parse(3, "skip packet for data: %s" % data)
             return None
         packet['dateTime'] = int(time.time() + 0.5)
         packet['usUnits'] = weewx.METRICWX
@@ -341,7 +342,6 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
             'pctgood': [None] * self.NUM_CHAN,
             'ts': int(time.time())}
         # unlike the rf sensitivity measures, pct_good is positive
-        self.rf_stats['min'][MACHINE_CHANNEL] = 100
 
     def _update_rf_stats(self, ch, signal, missed):
         # update the rf statistics
@@ -354,42 +354,24 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
 
     def _update_rf_summaries(self):
         # Update the summary stats, skip channels that do not matter.
-        #
-        # The pctgood is a measure of rf quality.  The way it is calculated
-        # depends on the output format.
-        #
-        # For machine, pct_good is (can be) part of the 'B' messages.  This
-        # value will be saved in the rf_stats of MACHINE_CHANNEL, typically
-        # once per minute.  When the summaries are calculated, the average of
-        # the pct_good values will be stored in the pctgood value of
-        # iss_channel.  The values of pctgood for the other active channels
-        # remain unchanged (i.e., None)
-        #
+        # The pctgood is a measure of rf quality.  
         # For raw format, the values of pctgood will be calculated per active
         # channel when the summaries are calculated, based upon the number of
-        # received good packets and number of missed packets.  The min stat
-        # for MACHINE_CHANNEL will always have the (initial) value of 100
-        # when the format is raw.
+        # received good packets and number of missed packets.
 
         for ch in range(1, self.NUM_CHAN): # skip channel 0 (it is not used)
             if self.rf_stats['cnt'][ch] > 0:
                 self.rf_stats['avg'][ch] = int(self.rf_stats['sum'][ch] / self.rf_stats['cnt'][ch])
-        if self.station.output_format == 'raw':
-            # raw format
-            for ch in range(1, self.NUM_CHAN - 1): # no ch 0 or MACHINE_CHANNEL
-                if self.rf_stats['cnt'][ch] > 0:
-                    self.rf_stats['pctgood'][ch] = \
-                        int(0.5 + 100.0 * self.rf_stats['cnt'][ch] /
-                            (self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch]))
-                    if -self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['missed'][ch] > 0:
-                        loginf('WARNING: rf_sensitivity (%s) might be too low for channel %s (%s signals missed)'
-                               % (self.station.rfs, ch, self.rf_stats['missed'][ch]))
-        else:
-            # machine format
-            self.rf_stats['pctgood'][self.station.channels['iss']] = self.rf_stats['avg'][MACHINE_CHANNEL]
+        for ch in range(1, self.NUM_CHAN - 1): # no ch
+            if self.rf_stats['cnt'][ch] > 0:
+                self.rf_stats['pctgood'][ch] = \
+                    int(0.5 + 100.0 * self.rf_stats['cnt'][ch] /
+                        (self.rf_stats['cnt'][ch] + self.rf_stats['missed'][ch]))
+                if -self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['missed'][ch] > 0:
+                    loginf('WARNING: rf_sensitivity (%s) might be too low for channel %s (%s signals missed)'
+                           % (self.station.rfs, ch, self.rf_stats['missed'][ch]))
 
     def _report_rf_stats(self):
-        raw_format = self.rf_stats['min'][MACHINE_CHANNEL] == 100
         logdbg("RF summary: rf_sensitivity=%s (values in dB)" %
                self.station.rfs)
         logdbg("Station           max   min   avg   last  count [missed] [good]")
@@ -397,41 +379,30 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                   ('wind', self.station.channels['anemometer']),
                   ('leaf_soil', self.station.channels['leaf_soil']),
                   ('temp_hum_1', self.station.channels['temp_hum_1']),
-                  ('temp_hum_2', self.station.channels['temp_hum_2']),
-                  ('pct_good', MACHINE_CHANNEL)]:
+                  ('temp_hum_2', self.station.channels['temp_hum_2'])]:
             if x[1] != 0:
-                if not(raw_format and x[1] == MACHINE_CHANNEL):
-                    self._report_channel(x[0], x[1], raw_format)
+                self._report_channel(x[0], x[1])
 
-    def _report_channel(self, label, ch, raw_format):
-        if raw_format:
-            if self.rf_stats['pctgood'][ch] is None \
-                    or (-self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['pctgood'][ch] < 85):
-                msg = "WARNING: rf_sensitivity might be too low for this channel"
-            else:
-                msg = ""
-            logdbg("%s %5d %5d %5d %5d %5d %7d      %s   %s" %
-                   (label.ljust(15),
-                    self.rf_stats['max'][ch],
-                    self.rf_stats['min'][ch],
-                    self.rf_stats['avg'][ch],
-                    self.rf_stats['last'][ch],
-                    self.rf_stats['cnt'][ch],
-                    self.rf_stats['missed'][ch],
-                    self.rf_stats['pctgood'][ch],
-                    msg))
+    def _report_channel(self, label, ch):
+        if self.rf_stats['pctgood'][ch] is None \
+                or (-self.rf_stats['min'][ch] >= self.station.rfs and self.rf_stats['pctgood'][ch] < 85):
+            msg = "WARNING: rf_sensitivity might be too low for this channel"
         else:
-            logdbg("%s %5d %5d %5d %5d %5d" %
-                   (label.ljust(15),
-                    self.rf_stats['max'][ch],
-                    self.rf_stats['min'][ch],
-                    self.rf_stats['avg'][ch],
-                    self.rf_stats['last'][ch],
-                    self.rf_stats['cnt'][ch]))
+            msg = ""
+        logdbg("%s %5d %5d %5d %5d %5d %7d      %s   %s" %
+               (label.ljust(15),
+                self.rf_stats['max'][ch],
+                self.rf_stats['min'][ch],
+                self.rf_stats['avg'][ch],
+                self.rf_stats['last'][ch],
+                self.rf_stats['cnt'][ch],
+                self.rf_stats['missed'][ch],
+                self.rf_stats['pctgood'][ch],
+                msg))
 
     def new_archive_record(self, event):
         self._update_rf_summaries()  # calculate rf summaries
-        # Don't store the firsts results after startup; the data is not complete
+        # Do not store first results after startup; the data are not complete
         if not self.first_rf_stats:
             event.record['rxCheckPercent'] = self.rf_stats['pctgood'][self.station.channels['iss']]
             logdbg("data['rxCheckPercent']: %s" % event.record['rxCheckPercent'])
@@ -469,11 +440,6 @@ class Meteostick(object):
         self.rf_threshold = absrfs * 2
         loginf('using rf sensitivity %s (-%s dB)' % (rfs, absrfs))
 
-        fmt = cfg.get('format', 'raw')
-        if fmt.lower() not in ['machine', 'raw']:
-            raise ValueError("unsupported format '%s'" % fmt)
-        self.output_format = fmt.lower()
-        loginf('using output_format %s' % fmt)
         channels = dict()
         channels['iss'] = int(cfg.get('iss_channel', 1))
         channels['anemometer'] = int(cfg.get('anemometer_channel', 0))
@@ -515,8 +481,11 @@ class Meteostick(object):
         return transmitters
 
     @staticmethod
-    def _check_crc(msg):
-        if crc16(msg) != 0:
+    def _check_crc(msg, chksum):
+        crc_result = crc16(msg)
+        if crc_result != chksum:
+            logerr('CRC result is 0x%04x, should be 0x%04x' %
+                          (crc_result, chksum))
             raise ValueError("CRC error")
 
     def __enter__(self):
@@ -603,11 +572,11 @@ class Meteostick(object):
         # Filter transmissions from anything other than configured transmitters
         self.send_command('f1')
 
-        # Set device to produce machine readable data
-        command = 'o1'
-        if self.output_format == 'raw':
-            # Set device to produce raw data
-            command = 'o0'
+        # Listen to configured repeaters
+        self.send_command('r1')     # repeater 1  
+
+        # Set device to produce 10-bytes raw data
+        command = 'o3'
         self.send_command(command)
 
         # Set the frequency. Valid frequencies are US, EU and AU
@@ -629,7 +598,7 @@ class Meteostick(object):
 
     @staticmethod
     def get_parts(raw):
-        dbg_parse(2, "readings: %s" % raw)
+        dbg_parse(1, "readings: %s" % raw)
         parts = raw.split(' ')
         dbg_parse(3, "parts: %s (%s)" % (parts, len(parts)))
         if len(parts) < 2:
@@ -646,142 +615,16 @@ class Meteostick(object):
             logerr("unprintable characters in readings: %s" % _fmt(raw))
             return data
         try:
-            if self.output_format == 'raw':
-                data = self.parse_raw(raw,
-                                      self.channels['iss'],
-                                      self.channels['anemometer'],
-                                      self.channels['leaf_soil'],
-                                      self.channels['temp_hum_1'],
-                                      self.channels['temp_hum_2'],
-                                      rain_per_tip)
-            else:
-                data = self.parse_machine(raw,
-                                          self.channels['iss'],
-                                          self.channels['temp_hum_1'],
-                                          self.channels['temp_hum_2'])
+            data = self.parse_raw(raw,
+                                  self.channels['iss'],
+                                  self.channels['anemometer'],
+                                  self.channels['leaf_soil'],
+                                  self.channels['temp_hum_1'],
+                                  self.channels['temp_hum_2'],
+                                  rain_per_tip)
+
         except ValueError, e:
             logerr("parse failed for '%s': %s" % (raw, e))
-        return data
-
-    @staticmethod
-    def parse_machine(raw, iss_ch, th1_ch, th2_ch):
-        # parse the 'machine' format
-        # message example:
-        # W 3 0.00 261 -53 L
-        data = dict()
-        parts = Meteostick.get_parts(raw)
-        n = len(parts)
-        data['channel'] = 0  # preset not available
-        data['rf_signal'] = 0  # preset not available
-        data['rf_missed'] = 0  # preset not available
-        if parts[0] == 'B':
-            # message examples:
-            # B 35.2 1023.57
-            # B 35.2 1023.57 65%
-            if n >= 3:
-                data['temp_in'] = float(parts[1]) # C
-                data['pressure'] = float(parts[2]) # hPa
-                if n >= 4:
-                    data['channel'] = MACHINE_CHANNEL
-                    data['rf_signal'] = float(parts[3].strip('%'))
-            else:
-                logerr("B: not enough parts (%s) in '%s'" % (n, raw))
-        elif parts[0] in 'WT':
-            # message examples:
-            # W 1 0.44 233 -68
-            # W 3 0.00 261 -53 L
-            # T 1 19.6 41 -66
-            # T 3 20.8 36 -53 L
-            if n >= 5:
-                data['channel'] = int(parts[1])
-                data['rf_signal'] = float(parts[4])
-                bat = 1 if n >= 6 and parts[5] == 'L' else 0
-                if parts[0] == 'W':
-                    if iss_ch != 0 and data['channel'] == iss_ch:
-                        data['bat_iss'] = bat
-                    else:
-                        data['bat_anemometer'] = bat
-                    data['wind_speed'] = float(parts[2]) # m/s
-                    data['wind_dir'] = float(parts[3]) # degrees
-                elif parts[0] == 'T':
-                    temp_c = float(parts[2]) # C
-                    if th1_ch != 0 and data['channel'] == th1_ch:
-                        data['bat_th_1'] = bat
-                        data['temp_1'] = temp_c
-                        data['humid_1'] = float(parts[3]) # %
-                    elif th2_ch != 0 and data['channel'] == th2_ch:
-                        data['bat_th_2'] = bat
-                        data['temp_2'] = temp_c
-                        data['humid_2'] = float(parts[3]) # %
-                    else:
-                        data['bat_iss'] = bat
-                        data['temperature'] = temp_c
-                        data['humidity'] = float(parts[3]) # %
-            else:
-                logerr("WT: not enough parts (%s) in '%s'" % (n, raw))
-        elif parts[0] in 'LMO':
-            # message examples:
-            # L 7 2 0 -52
-            # M 7 1 49 -51
-            # O 7 1 22.3 -51
-            if n >= 5:
-                data['channel'] = int(parts[1])
-                data['rf_signal'] = float(parts[4])
-                data['bat_leaf_soil'] = 1 if n >= 6 and parts[5] == 'L' else 0
-                if parts[0] == 'L':
-                    # bug: the zero values of not connected leaf wetness
-                    # sensors are also given
-                    data['leaf_wetness_%s' % parts[2]] = float(parts[3]) # 0-15
-                    dbg_parse(2, "leaf_wetness_%s=%s" %
-                              (parts[2], float(parts[3])))
-                elif parts[0] == 'M':
-                    data['soil_moisture_%s' % parts[2]] = float(parts[3]) # cbar 0-200
-                    dbg_parse(2, "soil_moisture_%s=%s" %
-                              (parts[2], float(parts[3])))
-                elif parts[0] == 'O':
-                    temp_c = float(parts[3]) # C
-                    data['soil_temp_%s' % parts[2]] = temp_c
-                    dbg_parse(2, "soil_temp_%s=%s" %
-                              (parts[2], float(parts[3])))
-                    # When connected to ports 1 and 2 the temp sensor is also
-                    # used for the leaf wetness temperatures
-                    if int(parts[2]) <= 2:
-                        data['leaf_temp_%s' % parts[2]] = temp_c
-                        dbg_parse(2, "leaf_temp_%s=%s" %
-                                  (parts[2], float(parts[3])))
-            else:
-                logerr("LMO: not enough parts (%s) in '%s'" % (n, raw))
-        elif parts[0] in 'RSUP':
-            # message examples:
-            # R 2 128 -67
-            # S 621.2 -68
-            # U 3 0.4 -58 L
-            # P 1 21.1 -68
-            if n >= 4:
-                data['channel'] = int(parts[1])
-                data['rf_signal'] = float(parts[3])
-                data['bat_iss'] = 1 if n >= 5 and parts[4] == 'L' else 0
-                if parts[0] == 'R':
-                    rain_count = int(parts[2])
-                    if 0 <= rain_count < 128:
-                        data['rain_count'] = rain_count  # 0-127
-                    elif rain_count == 128: # value of 128 indicates no sensor
-                        pass
-                    else:
-                        loginf("ignoring invalid rain %s on channel %s" %
-                               (rain_count, data['channel']))
-                elif parts[0] == 'S':
-                    data['solar_radiation'] = float(parts[2])  # W/m^2
-                elif parts[0] == 'U':
-                    data['uv'] = float(parts[2])
-                elif parts[0] == 'P':
-                    data['solar_power'] = float(parts[2])  # 0-100
-            else:
-                logerr("RSUP: not enough parts (%s) in '%s'" % (n, raw))
-        elif parts[0] == '#':
-            loginf("%s" % raw)
-        else:
-            logerr("unknown sensor identifier '%s' in %s" % (parts[0], raw))
         return data
 
     @staticmethod
@@ -799,27 +642,48 @@ class Meteostick(object):
                 data['temp_in'] = float(parts[3]) / 10.0 # C
                 data['pressure'] = float(parts[4]) / 100.0 # hPa
                 if n > 7:
-                    data['humidity_in'] = float(parts[7]) # only with custom receiver
+                    # only with custom receiver
+                    data['humidity_in'] = float(parts[7])
             else:
                 logerr("B: not enough parts (%s) in '%s'" % (n, raw))
         elif parts[0] == 'I':
-            # raw Davis sensor message in 8 byte format incl header and
+            # raw Davis sensor message in 10 byte format incl header and
             # additional info
             # message example:
             #       ---- raw message ----  rfs ts_last
             # I 102 51 0 DB FF 73 0 11 41  -65 5249944 202
-            raw_msg = [0] * 8
-            for i in xrange(0, 8):
-                raw_msg[i] = chr(int(parts[i + 2], 16))
-            Meteostick._check_crc(raw_msg)
-            for i in xrange(0, 8):
+            raw_msg = [0] * 10
+            for i in xrange(0, 10):
                 raw_msg[i] = parts[i + 2]
             pkt = bytearray([int(i, base=16) for i in raw_msg])
+
+            # perform crc-check
+            raw_msg_crc = [0] * 8
+            if pkt[8] == 0xFF and pkt[9] == 0xFF:
+                # message received from davis equipment
+                # Calculate crc with bytes 0-7, result must be equal to 0
+                chksum = 0
+                for i in xrange(0, 8):
+                    raw_msg_crc[i] = chr(int(parts[i + 2], 16))
+                Meteostick._check_crc(raw_msg_crc, chksum)
+            else:
+                # message received via repeater
+                # Calculate crc with bytes 0-5 and 8-9, result must be equal
+                # to bytes 6-7
+                chksum = (pkt[6] << 8) + pkt[7]
+                for i in xrange(0, 6):
+                    raw_msg_crc[i] = chr(int(parts[i + 2], 16))
+                for i in xrange(6, 8):
+                    raw_msg_crc[i] = chr(int(parts[i + 4], 16))
+                Meteostick._check_crc(raw_msg_crc, chksum)
+
             data['channel'] = (pkt[0] & 0x7) + 1
             battery_low = (pkt[0] >> 3) & 0x1
-            data['rf_signal'] = int(parts[11])
-            time_since_last = int(parts[12])
-            data['rf_missed'] = ((time_since_last + 1250000) // 2500000) - 1
+            data['rf_signal'] = int(parts[13])
+            time_since_last = int(parts[14])
+            # the cyclus time varies from 2.5 to 3 seconds for channels 1 to 8
+            # simplifiy calculation with max cyclus time of 3.0 seconds
+            data['rf_missed'] = (time_since_last // 2500000) - 1
             if data['rf_missed'] > 0:
                 dbg_parse(3, "channel %s missed %s" %
                           (data['channel'], data['rf_missed']))
@@ -854,7 +718,7 @@ class Meteostick(object):
                     For now we use the traditional 'pro' formula for all
                     wind directions.
                     """
-                    dbg_parse(2, "wind_speed_raw=%03x wind_dir_raw=0x%03x" %
+                    dbg_parse(3, "wind_speed_raw=%03x wind_dir_raw=0x%03x" %
                               (wind_speed_raw, wind_dir_raw))
 
                     # Vantage Pro and Pro2
@@ -875,7 +739,7 @@ class Meteostick(object):
                     data['wind_speed_raw'] = wind_speed_raw
                     data['wind_dir'] = wind_dir_pro
                     data['wind_speed'] = wind_speed_ec * MPH_TO_MPS
-                    dbg_parse(2, "WS=%s WD=%s WS_raw=%s WS_ec=%s WD_raw=%s WD_pro=%s WD_vue=%s" %
+                    dbg_parse(3, "WS=%s WD=%s WS_raw=%s WS_ec=%s WD_raw=%s WD_pro=%s WD_vue=%s" %
                               (data['wind_speed'], data['wind_dir'],
                                wind_speed_raw, wind_speed_ec,
                                wind_dir_raw if wind_dir_raw <= 180 else 360 - wind_dir_raw,
@@ -895,7 +759,7 @@ class Meteostick(object):
                     supercap_volt_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
                     if supercap_volt_raw != 0x3FF:
                         data['supercap_volt'] = supercap_volt_raw / 300.0
-                        dbg_parse(2, "supercap_volt_raw=0x%03x value=%s" %
+                        dbg_parse(3, "supercap_volt_raw=0x%03x value=%s" %
                                   (supercap_volt_raw, data['supercap_volt']))
                 elif message_type == 3:
                     # unknown message type
@@ -913,7 +777,7 @@ class Meteostick(object):
                     uv_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
                     if uv_raw != 0x3FF:
                         data['uv'] = uv_raw / 50.0
-                        dbg_parse(2, "uv_raw=%04x value=%s" %
+                        dbg_parse(3, "uv_raw=%04x value=%s" %
                                   (uv_raw, data['uv']))
                 elif message_type == 5:
                     # rain rate
@@ -927,8 +791,9 @@ class Meteostick(object):
                     'time between tips' in s. The rain_rate then would be:
                     3600 [s/h] / time_between_tips [s] * 0.2 [mm] = xxx [mm/h]
                     """
-                    time_between_tips_raw = ((pkt[4] & 0x30) << 4) + pkt[3]  # typical: 64-1022
-                    dbg_parse(2, "time_between_tips_raw=%03x (%s)" %
+                    # typical time between tips: 64-1022
+                    time_between_tips_raw = ((pkt[4] & 0x30) << 4) + pkt[3]
+                    dbg_parse(3, "time_between_tips_raw=%03x (%s)" %
                               (time_between_tips_raw, time_between_tips_raw))
                     if data['channel'] == iss_ch: # rain sensor is present
                         rain_rate = None
@@ -941,14 +806,14 @@ class Meteostick(object):
                             # 64/16 - 1020/16 = 4 - 63.8 (180.0 - 11.1 mm/h)
                             time_between_tips = time_between_tips_raw / 16.0
                             rain_rate = 3600.0 / time_between_tips * rain_per_tip
-                            dbg_parse(2, "heavy_rain=%s mm/h, time_between_tips=%s s" %
+                            dbg_parse(3, "heavy_rain=%s mm/h, time_between_tips=%s s" %
                                       (rain_rate, time_between_tips))
                         else:
                             # light rain. typical value:
                             # 64 - 1022 (11.1 - 0.8 mm/h)
                             time_between_tips = time_between_tips_raw
                             rain_rate = 3600.0 / time_between_tips * rain_per_tip
-                            dbg_parse(2, "light_rain=%s mm/h, time_between_tips=%s s" %
+                            dbg_parse(3, "light_rain=%s mm/h, time_between_tips=%s s" %
                                       (rain_rate, time_between_tips))
                         data['rain_rate'] = rain_rate
                 elif message_type == 6:
@@ -959,7 +824,7 @@ class Meteostick(object):
                     sr_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
                     if sr_raw < 0x3FE:
                         data['solar_radiation'] = sr_raw * 1.757936
-                        dbg_parse(2, "solar_radiation_raw=0x%04x value=%s"
+                        dbg_parse(3, "solar_radiation_raw=0x%04x value=%s"
                                   % (sr_raw, data['solar_radiation']))
                 elif message_type == 7:
                     # solar cell output / solar power (Vue only)
@@ -972,7 +837,7 @@ class Meteostick(object):
                     solar_power_raw = ((pkt[3] << 2) + (pkt[4] >> 6)) & 0x3FF
                     if solar_power_raw != 0x3FF:
                         data['solar_power'] = solar_power_raw / 300.0
-                        dbg_parse(2, "solar_power_raw=0x%03x solar_power=%s"
+                        dbg_parse(3, "solar_power_raw=0x%03x solar_power=%s"
                                   % (solar_power_raw, data['solar_power']))
                 elif message_type == 8:
                     # outside temperature
@@ -980,25 +845,28 @@ class Meteostick(object):
                     # I 103 80 0 0 33 8D 0 25 11  -78 2562444 -25 (digital temp)
 
                     # I 100 81 0 0 59 45 0 A3 E6  -89 2624956 -42 (analog temp)
-                    # I 104 81 0 DB FF C3 0 AB F8  -66 2624980 125 (no sensor)
+                    # I 104 81 0 DB FF C3 0 AB F8  -66 2624980 125 (no digital sensor)
+                    # I 101 81 5 C9 FF 83 0 73 AC FF FF  -68 2624988 161 (no analog sensor)
                     temp_raw = (pkt[3] << 4) + (pkt[4] >> 4)  # 12-bits temp value
-                    if temp_raw != 0xFFC:
+                    if temp_raw != 0xFFC and temp_raw != 0xFF8:
                         if pkt[4] & 0x8:
                             # digital temp sensor
                             temp_f = temp_raw / 10.0
                             temp_c = weewx.wxformulas.FtoC(temp_f) # C
-                            dbg_parse(2, "digital temp_raw=0x%03x temp_f=%s temp_c=%s"
+                            dbg_parse(3, "digital temp_raw=0x%03x temp_f=%s temp_c=%s"
                                       % (temp_raw, temp_f, temp_c))
                         else:
                             # analog sensor (thermistor)
                             temp_raw /= 4  # 10-bits temp value
                             temp_c = calculate_thermistor_temp(temp_raw)
-                            dbg_parse(2, "thermistor temp_raw=0x%03x temp_c=%s"
+                            dbg_parse(3, "thermistor temp_raw=0x%03x temp_c=%s"
                                       % (temp_raw, temp_c))
                         if data['channel'] == th1_ch:
                             data['temp_1'] = temp_c
                         elif data['channel'] == th2_ch:
                             data['temp_2'] = temp_c
+                        elif data['channel'] == wind_ch:
+                            data['temp_3'] = temp_c
                         else:
                             data['temperature'] = temp_c
                 elif message_type == 9:
@@ -1009,7 +877,7 @@ class Meteostick(object):
                     gust_raw = pkt[3]  # mph
                     gust_index_raw = pkt[5] >> 4
                     if not(gust_raw == 0 and gust_index_raw == 0):
-                        dbg_parse(2, "W10=%s gust_index_raw=%s" %
+                        dbg_parse(3, "W10=%s gust_index_raw=%s" %
                                   (gust_raw, gust_index_raw))
                         # don't store the 10-min gust data because there is no
                         # field for it reserved in the standard wview schema
@@ -1025,9 +893,11 @@ class Meteostick(object):
                             data['humid_1'] = humidity
                         elif data['channel'] == th2_ch:
                             data['humid_2'] = humidity
+                        elif data['channel'] == wind_ch:
+                            loginf("Warning: humidity sensor of Anemometer Transmitter Kit not in sensor map: %s" % humidity)
                         else:
                             data['humidity'] = humidity
-                        dbg_parse(2, "humidity_raw=0x%03x value=%s" %
+                        dbg_parse(3, "humidity_raw=0x%03x value=%s" %
                                   (humidity_raw, humidity))
                 elif message_type == 0xC:
                     # unknown message
@@ -1051,7 +921,7 @@ class Meteostick(object):
                     if rain_count_raw != 0x80:
                         rain_count = rain_count_raw & 0x7F  # skip high bit
                         data['rain_count'] = rain_count
-                        dbg_parse(2, "rain_count_raw=0x%02x value=%s" %
+                        dbg_parse(3, "rain_count_raw=0x%02x value=%s" %
                                   (rain_count_raw, rain_count))
                 else:
                     # unknown message type
@@ -1077,7 +947,7 @@ class Meteostick(object):
                             # soil temperature
                             temp_c = calculate_thermistor_temp(temp_raw)
                             data['soil_temp_%s' % sensor_num] = temp_c
-                            dbg_parse(2, "soil_temp_%s=%s 0x%03x" %
+                            dbg_parse(3, "soil_temp_%s=%s 0x%03x" %
                                       (sensor_num, temp_c, temp_raw))
                         if pkt[2] != 0xFF:
                             # soil moisture potential
@@ -1087,7 +957,7 @@ class Meteostick(object):
                                 "soil_moisture", norm_fact,
                                 potential_raw, temp_c, SM_MAP)
                             data['soil_moisture_%s' % sensor_num] = soil_moisture
-                            dbg_parse(2, "soil_moisture_%s=%s 0x%03x" %
+                            dbg_parse(3, "soil_moisture_%s=%s 0x%03x" %
                                       (sensor_num, soil_moisture, potential_raw))
                     elif data_subtype == 2:
                         # leaf wetness
@@ -1098,7 +968,7 @@ class Meteostick(object):
                             # leaf temperature
                             temp_c = calculate_thermistor_temp(temp_raw)
                             data['leaf_temp_%s' % sensor_num] = temp_c
-                            dbg_parse(2, "leaf_temp_%s=%s 0x%03x" %
+                            dbg_parse(3, "leaf_temp_%s=%s 0x%03x" %
                                       (sensor_num, temp_c, temp_raw))
                         if pkt[2] != 0:
                             # leaf wetness potential
@@ -1108,7 +978,7 @@ class Meteostick(object):
                                 "leaf_wetness", norm_fact,
                                 potential_raw, temp_c, LW_MAP)
                             data['leaf_wetness_%s' % sensor_num] = leaf_wetness
-                            dbg_parse(2, "leaf_wetness_%s=%s 0x%03x" %
+                            dbg_parse(3, "leaf_wetness_%s=%s 0x%03x" %
                                       (sensor_num, leaf_wetness, potential_raw))
                     else:
                         logerr("unknown subtype '%s' in '%s'" % (data_subtype, raw))
@@ -1254,7 +1124,7 @@ class Meteostick(object):
                     y0, y1,
                     x, y):
 
-        dbg_parse(2, "rx0=%s, rx1=%s, ry0=%s, ry1=%s, x0=%s, x1=%s, y0=%s, y1=%s, x=%s, y=%s" %
+        dbg_parse(3, "rx0=%s, rx1=%s, ry0=%s, ry1=%s, x0=%s, x1=%s, y0=%s, y1=%s, x=%s, y=%s" %
                   (rx0, rx1, ry0, ry1, x0, x1, y0, y1, x, y))
 
         if rx0 == rx1:

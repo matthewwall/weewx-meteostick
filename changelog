@@ -1,3 +1,16 @@
+0.58 12sep2017
+* added handling of messages received via repeater
+* changed meteostick output from 8 to 10-bytes raw data
+* added crc-check for 10-byte raw data
+* more accurate pct-good in RF-summary
+* added check for non-present analog temperature sensor
+* added extraTemp3 in DEFAULT_SENSOR_MAP for analog temp sensor connected
+   to anemometer transmitter kit
+* added warning for humidity sensor connected to anemometer transmitter kit
+   (no default sensor mapping)
+* rearranged debug_parse log levels; now less logging for levels 1 and 2
+* removed handling of machine format
+
 0.50 05jul2017
 * fixed humidity logging bug
 
