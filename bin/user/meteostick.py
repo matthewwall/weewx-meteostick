@@ -254,7 +254,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                                        self.DEFAULT_RAIN_BUCKET_TYPE))
         if bucket_type not in [0, 1]:
             raise ValueError("unsupported rain bucket type %s" % bucket_type)
-        self.rain_per_tip = 0.0254 if bucket_type == 0 else 0.2 # mm
+        self.rain_per_tip = 0.254 if bucket_type == 0 else 0.2 # mm
         loginf('using rain_bucket_type %s' % bucket_type)
         self.sensor_map = dict(self.DEFAULT_SENSOR_MAP)
         if 'sensor_map' in stn_dict:
