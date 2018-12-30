@@ -918,11 +918,10 @@ class Meteostick(object):
                     others wrap around at 255.  When we filter the highest
                     bit, both counter types will wrap at 127.
                     """
-                    if rain_count_raw != 0x80:
-                        rain_count = rain_count_raw & 0x7F  # skip high bit
-                        data['rain_count'] = rain_count
-                        dbg_parse(3, "rain_count_raw=0x%02x value=%s" %
-                                  (rain_count_raw, rain_count))
+                    rain_count = rain_count_raw & 0x7F  # skip high bit
+                    data['rain_count'] = rain_count
+                    dbg_parse(3, "rain_count_raw=0x%02x value=%s" %
+                              (rain_count_raw, rain_count))
                 else:
                     # unknown message type
                     logerr("unknown message type 0x%01x" % message_type)
