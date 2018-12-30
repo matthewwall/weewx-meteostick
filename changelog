@@ -1,3 +1,6 @@
+0.59 30dec2018
+* fixed bucket tip calculation to use mm not cm (thanks to user poblabs)
+
 0.58 12sep2017
 * added handling of messages received via repeater
 * changed meteostick output from 8 to 10-bytes raw data

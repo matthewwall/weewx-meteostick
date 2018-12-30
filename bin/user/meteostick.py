@@ -52,7 +52,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.58'
+DRIVER_VERSION = '0.59'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
