@@ -1,3 +1,6 @@
+0.60 26jan2019
+* handle negative values for outside temperature (poblabs and mcrossley)
+
 0.59 30dec2018
 * fixed bucket tip calculation to use mm not cm (thanks to user poblabs)
 * do not skip rain count when counter is 128 (thanks to user watou)

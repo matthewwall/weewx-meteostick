@@ -52,7 +52,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.59'
+DRIVER_VERSION = '0.60'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -850,8 +850,11 @@ class Meteostick(object):
                     temp_raw = (pkt[3] << 4) + (pkt[4] >> 4)  # 12-bits temp value
                     if temp_raw != 0xFFC and temp_raw != 0xFF8:
                         if pkt[4] & 0x8:
-                            # digital temp sensor
-                            temp_f = temp_raw / 10.0
+                            # digital temp sensor - value is twos-complement
+                            if pkt[3] & 0x80 != 0:
+                                temp_f = -(temp_raw ^ 0xFFF) / 10.0
+                            else:
+                                temp_f = temp_raw / 10.0
                             temp_c = weewx.wxformulas.FtoC(temp_f) # C
                             dbg_parse(3, "digital temp_raw=0x%03x temp_f=%s temp_c=%s"
                                       % (temp_raw, temp_f, temp_c))
