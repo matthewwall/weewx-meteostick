@@ -71,19 +71,37 @@ def confeditor_loader():
 def configurator_loader(config_dict):
     return MeteostickConfigurator()
 
+try:
+    # Test for new-style weewx v4 logging by trying to import weeutil.logger
+    import weeutil.logger
+    import logging
 
-def logmsg(level, msg):
-    syslog.syslog(level, 'meteostick: %s' % msg)
+    log = logging.getLogger(__name__)
 
-def logdbg(msg):
-    logmsg(syslog.LOG_DEBUG, msg)
+    def logdbg(msg):
+        log.debug(msg)
 
-def loginf(msg):
-    logmsg(syslog.LOG_INFO, msg)
+    def loginf(msg):
+        log.info(msg)
 
-def logerr(msg):
-    logmsg(syslog.LOG_ERR, msg)
+    def logerr(msg):
+        log.error(msg)
 
+except ImportError:
+    # Old-style weewx logging
+    import syslog
+
+    def logmsg(level, msg):
+        syslog.syslog(level, 'meteostick: %s' % msg)
+
+    def logdbg(msg):
+        logmsg(syslog.LOG_DEBUG, msg)
+
+    def loginf(msg):
+        logmsg(syslog.LOG_INFO, msg)
+
+    def logerr(msg):
+        logmsg(syslog.LOG_ERR, msg)
 
 def dbg_serial(verbosity, msg):
     if DEBUG_SERIAL >= verbosity:
