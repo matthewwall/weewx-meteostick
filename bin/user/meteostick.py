@@ -36,8 +36,9 @@ seems to result in higher quality readings.
 """
 
 # FIXME: eliminate the service component - there is no need to bind to events
-
+from __future__ import print_function  # Python 2/3 compatiblity
 from __future__ import with_statement
+
 import math
 import serial
 import string
@@ -52,7 +53,7 @@ import weewx.units
 from weewx.crc16 import crc16
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.60'
+DRIVER_VERSION = '0.61'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -136,7 +137,7 @@ def calculate_thermistor_temp(temp_raw):
         dbg_parse(3, 'r (k ohm) %s temp_raw %s thermistor_temp %s' %
                   (r, temp_raw, thermistor_temp))
         return thermistor_temp
-    except ValueError, e:
+    except ValueError as e:
         logerr('thermistor_temp failed for temp_raw %s r (k ohm) %s'
                'error: %s' % (temp_raw, r, e))
     return DEFAULT_SOIL_TEMP
@@ -507,7 +508,7 @@ class Meteostick(object):
             self.serial_port = None
 
     def get_readings(self):
-        buf = self.serial_port.readline()
+        buf = self.serial_port.readline().decode('utf-8')
         if len(buf) > 0:
             dbg_serial(2, "station said: %s" %
                        ' '.join(["%0.2X" % ord(c) for c in buf]))
@@ -517,7 +518,7 @@ class Meteostick(object):
         for ntries in range(0, max_tries):
             try:
                 return self.get_readings()
-            except serial.serialutil.SerialException, e:
+            except serial.serialutil.SerialException as e:
                 loginf("Failed attempt %d of %d to get readings: %s" %
                        (ntries + 1, max_tries, e))
                 time.sleep(retry_wait)
@@ -534,7 +535,7 @@ class Meteostick(object):
         self.serial_port.flushInput()
 
         # Send a reset command
-        self.serial_port.write('r\n')
+        self.serial_port.write(b'r\n')
         # Wait until we see the ? character
         start_ts = time.time()
         ready = False
@@ -542,7 +543,7 @@ class Meteostick(object):
         while not ready:
             time.sleep(0.1)
             while self.serial_port.inWaiting() > 0:
-                c = self.serial_port.read(1)
+                c = self.serial_port.read(1).decode('utf-8')
                 if c == '?':
                     ready = True
                 elif c in string.printable:
@@ -590,9 +591,10 @@ class Meteostick(object):
         # From now on the device will produce lines with received data
 
     def send_command(self, cmd):
-        self.serial_port.write(cmd + '\r')
+        cmd2 = (cmd + "\r").encode('utf-8')
+        self.serial_port.write(cmd2)
         time.sleep(0.2)
-        response = self.serial_port.read(self.serial_port.inWaiting())
+        response = self.serial_port.read(self.serial_port.inWaiting()).decode('utf-8')
         dbg_serial(1, "cmd: '%s': %s" % (cmd, response))
         self.serial_port.flushInput()
 
@@ -609,9 +611,7 @@ class Meteostick(object):
         data = dict()
         if not raw:
             return data
-        printable = set(string.printable)
-        fdata = filter(lambda x: x in printable, raw)
-        if fdata != raw:
+        if not all(c in string.printable for c in raw):
             logerr("unprintable characters in readings: %s" % _fmt(raw))
             return data
         try:
@@ -623,7 +623,7 @@ class Meteostick(object):
                                   self.channels['temp_hum_2'],
                                   rain_per_tip)
 
-        except ValueError, e:
+        except ValueError as e:
             logerr("parse failed for '%s': %s" % (raw, e))
         return data
 
@@ -653,7 +653,7 @@ class Meteostick(object):
             #       ---- raw message ----  rfs ts_last
             # I 102 51 0 DB FF 73 0 11 41  -65 5249944 202
             raw_msg = [0] * 10
-            for i in xrange(0, 10):
+            for i in range(0, 10):
                 raw_msg[i] = parts[i + 2]
             pkt = bytearray([int(i, base=16) for i in raw_msg])
 
@@ -663,7 +663,7 @@ class Meteostick(object):
                 # message received from davis equipment
                 # Calculate crc with bytes 0-7, result must be equal to 0
                 chksum = 0
-                for i in xrange(0, 8):
+                for i in range(0, 8):
                     raw_msg_crc[i] = chr(int(parts[i + 2], 16))
                 Meteostick._check_crc(raw_msg_crc, chksum)
             else:
@@ -671,9 +671,9 @@ class Meteostick(object):
                 # Calculate crc with bytes 0-5 and 8-9, result must be equal
                 # to bytes 6-7
                 chksum = (pkt[6] << 8) + pkt[7]
-                for i in xrange(0, 6):
+                for i in range(0, 6):
                     raw_msg_crc[i] = chr(int(parts[i + 2], 16))
-                for i in xrange(6, 8):
+                for i in range(6, 8):
                     raw_msg_crc[i] = chr(int(parts[i + 4], 16))
                 Meteostick._check_crc(raw_msg_crc, chksum)
 
@@ -887,11 +887,19 @@ class Meteostick(object):
                 elif message_type == 0xA:
                     # outside humidity
                     # message examples:
-                    # I 101 A0 0 0 C9 3D 0 2A 87  -76 2562432 54
-                    # I 100 A1 0 DB 0 3 0 47 C7  -67 5249932 -130 (no sensor)
+                    # A0 00 00 C9 3D 00 2A 87 (digital sensor, variant a)
+                    # A0 01 3A 80 3B 00 ED 0E (digital sensor, variant b)
+                    # A0 01 41 7F 39 00 18 65 (digital sensor, variant c)
+                    # A0 00 00 22 85 00 ED E3 (analog sensor)
+                    # A1 00 DB 00 03 00 47 C7 (no sensor)
                     humidity_raw = ((pkt[4] >> 4) << 8) + pkt[3]
                     if humidity_raw != 0:
-                        humidity = humidity_raw / 10.0
+                        if pkt[4] & 0x08 == 0x8:
+                            # digital sensor
+                            humidity = humidity_raw / 10.0
+                        else:
+                            # analog sensor (pkt[4] & 0x0f == 0x5)
+                            humidity = humidity_raw * -0.301 + 710.23
                         if data['channel'] == th1_ch:
                             data['humid_1'] = humidity
                         elif data['channel'] == th2_ch:
@@ -921,10 +929,11 @@ class Meteostick(object):
                     others wrap around at 255.  When we filter the highest
                     bit, both counter types will wrap at 127.
                     """
-                    rain_count = rain_count_raw & 0x7F  # skip high bit
-                    data['rain_count'] = rain_count
-                    dbg_parse(3, "rain_count_raw=0x%02x value=%s" %
-                              (rain_count_raw, rain_count))
+                    if rain_count_raw != 0x80:
+                        rain_count = rain_count_raw & 0x7F  # skip high bit
+                        data['rain_count'] = rain_count
+                        dbg_parse(3, "rain_count_raw=0x%02x value=%s" %
+                                  (rain_count_raw, rain_count))
                 else:
                     # unknown message type
                     logerr("unknown message type 0x%01x" % message_type)
@@ -1169,30 +1178,37 @@ class MeteostickConfEditor(weewx.drivers.AbstractConfEditor):
     # Rain bucket type: 0 is 0.01 inch per tip, 1 is 0.2 mm per tip
     rain_bucket_type = 1
 
+    # Print debug messages
+    #  0=no logging; 1=minimum logging; 2=normal logging; 3=detailed logging
+    debug_parse = 0
+    debug_serial = 0
+    debug_rain = 0
+    debug_rf_sensitivity = 1
+
     # The driver to use
     driver = user.meteostick
 """
 
     def prompt_for_settings(self):
         settings = dict()
-        print "Specify the serial port on which the meteostick is connected,"
-        print "for example /dev/ttyUSB0 or /dev/ttyS0"
+        print("Specify the serial port on which the meteostick is connected,")
+        print("for example /dev/ttyUSB0 or /dev/ttyS0")
         settings['port'] = self._prompt('port', Meteostick.DEFAULT_PORT)
-        print "Specify the frequency between the station and the meteostick,"
-        print "one of US (915 MHz), EU (868.3 MHz), or AU (915 MHz)"
+        print("Specify the frequency between the station and the meteostick,")
+        print("one of US (915 MHz), EU (868.3 MHz), or AU (915 MHz)")
         settings['transceiver_frequency'] = self._prompt('frequency', 'EU', ['US', 'EU', 'AU'])
-        print "Specify the type of the rain bucket,"
-        print "either 0 (0.01 inches per tip) or 1 (0.2 mm per tip)"
+        print("Specify the type of the rain bucket,")
+        print("either 0 (0.01 inches per tip) or 1 (0.2 mm per tip)")
         settings['rain_bucket_type'] = self._prompt('rain_bucket_type', MeteostickDriver.DEFAULT_RAIN_BUCKET_TYPE)
-        print "Specify the channel of the ISS (1-8)"
+        print("Specify the channel of the ISS (1-8)")
         settings['iss_channel'] = self._prompt('iss_channel', 1)
-        print "Specify the channel of the Anemometer Transmitter Kit (0=none; 1-8)"
+        print("Specify the channel of the Anemometer Transmitter Kit (0=none; 1-8)")
         settings['anemometer_channel'] = self._prompt('anemometer_channel', 0)
-        print "Specify the channel of the Leaf & Soil station (0=none; 1-8)"
+        print("Specify the channel of the Leaf & Soil station (0=none; 1-8)")
         settings['leaf_soil_channel'] = self._prompt('leaf_soil_channel', 0)
-        print "Specify the channel of the first Temp/Humidity station (0=none; 1-8)"
+        print("Specify the channel of the first Temp/Humidity station (0=none; 1-8)")
         settings['temp_hum_1_channel'] = self._prompt('temp_hum_1_channel', 0)
-        print "Specify the channel of the second Temp/Humidity station (0=none; 1-8)"
+        print("Specify the channel of the second Temp/Humidity station (0=none; 1-8)")
         settings['temp_hum_2_channel'] = self._prompt('temp_hum_2_channel', 0)
         return settings
 
@@ -1239,7 +1255,7 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
         driver = MeteostickDriver(None, config_dict)
         info = driver.station.reset()
         if options.info:
-            print info
+            print(info)
         cfg = {
             'v': options.verbose,
             'd': options.debug,
@@ -1252,11 +1268,11 @@ class MeteostickConfigurator(weewx.drivers.AbstractConfigurator):
         for opt in cfg:
             if cfg[opt]:
                 cmd = opt + cfg[opt]
-                print "set station parameter %s" % cmd
+                print("set station parameter %s" % cmd)
                 driver.station.send_command(cmd)
         if options.opts:
             driver.station.send_command('?')
-            print driver.station.get()
+            print(driver.station.get())
         driver.closePort()
 
 
@@ -1302,7 +1318,7 @@ if __name__ == '__main__':
     (opts, args) = parser.parse_args()
 
     if opts.version:
-        print "meteostick driver version %s" % DRIVER_VERSION
+        print("meteostick driver version %s" % DRIVER_VERSION)
         exit(0)
 
     with Meteostick(port=opts.port, baudrate=opts.baud,
@@ -1314,4 +1330,4 @@ if __name__ == '__main__':
                     temp_hum_2_channel=int(opts.c_th2),
                     rf_sensitivity=int(opts.rfs)) as s:
         while True:
-            print time.time(), s.get_readings()
+            print(time.time(), s.get_readings())
