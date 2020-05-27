@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Meteostick driver for weewx
 #
-# Copyright 2016 Matthew Wall, Luc Heijst
+# Copyright 2016-2020 Matthew Wall, Luc Heijst
 #
 # Thanks to Frank Bandle for testing during the development of this driver.
 # Thanks to kobuki for validation, testing, and general sanity checks.
@@ -42,7 +42,6 @@ from __future__ import with_statement
 import math
 import serial
 import string
-import syslog
 import time
 
 import weewx
@@ -52,8 +51,39 @@ import weewx.wxformulas
 import weewx.units
 from weewx.crc16 import crc16
 
+try:
+    # Test for new-style weewx logging by trying to import weeutil.logger
+    import weeutil.logger
+    import logging
+    log = logging.getLogger(__name__)
+
+    def logdbg(msg):
+        log.debug(msg)
+
+    def loginf(msg):
+        log.info(msg)
+
+    def logerr(msg):
+        log.error(msg)
+
+except ImportError:
+    # Old-style weewx logging
+    import syslog
+
+    def logmsg(level, msg):
+        syslog.syslog(level, 'mstk: %s:' % msg)
+
+    def logdbg(msg):
+        logmsg(syslog.LOG_DEBUG, msg)
+
+    def loginf(msg):
+        logmsg(syslog.LOG_INFO, msg)
+
+    def logerr(msg):
+        logmsg(syslog.LOG_ERR, msg)
+
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.61'
+DRIVER_VERSION = '0.66'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -72,19 +102,6 @@ def configurator_loader(config_dict):
     return MeteostickConfigurator()
 
 
-def logmsg(level, msg):
-    syslog.syslog(level, 'meteostick: %s' % msg)
-
-def logdbg(msg):
-    logmsg(syslog.LOG_DEBUG, msg)
-
-def loginf(msg):
-    logmsg(syslog.LOG_INFO, msg)
-
-def logerr(msg):
-    logmsg(syslog.LOG_ERR, msg)
-
-
 def dbg_serial(verbosity, msg):
     if DEBUG_SERIAL >= verbosity:
         logdbg(msg)
@@ -96,7 +113,7 @@ def dbg_parse(verbosity, msg):
 def _fmt(data):
     if not data:
         return ''
-    return ' '.join(['%02x' % ord(x) for x in data])
+    return ' '.join(['%02x' % int(ord(x)) for x in data])
 
 # default temperature for soil moisture and leaf wetness sensors that
 # do not have a temperature sensor.
@@ -315,7 +332,8 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                 rain_count = 0
             # handle rain counter wrap around from 127 to 0
             if rain_count < 0:
-                loginf("rain counter wraparound detected rain_count=%s" %
+                if DEBUG_RAIN:
+                    logdbg("rain counter wraparound detected rain_count=%s" %
                        rain_count)
                 rain_count += 128
             self.last_rain_count = data['rain_count']
@@ -600,7 +618,8 @@ class Meteostick(object):
 
     @staticmethod
     def get_parts(raw):
-        dbg_parse(1, "readings: %s" % raw)
+        raw_str = str(raw)
+        dbg_parse(1, "readings: %s" % raw_str)
         parts = raw.split(' ')
         dbg_parse(3, "parts: %s (%s)" % (parts, len(parts)))
         if len(parts) < 2:
@@ -622,7 +641,6 @@ class Meteostick(object):
                                   self.channels['temp_hum_1'],
                                   self.channels['temp_hum_2'],
                                   rain_per_tip)
-
         except ValueError as e:
             logerr("parse failed for '%s': %s" % (raw, e))
         return data
