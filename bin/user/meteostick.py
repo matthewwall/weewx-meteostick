@@ -36,6 +36,7 @@ seems to result in higher quality readings.
 """
 
 # FIXME: eliminate the service component - there is no need to bind to events
+from __future__ import division
 from __future__ import print_function  # Python 2/3 compatiblity
 from __future__ import with_statement
 
@@ -83,7 +84,7 @@ except ImportError:
         logmsg(syslog.LOG_ERR, msg)
 
 DRIVER_NAME = 'Meteostick'
-DRIVER_VERSION = '0.66'
+DRIVER_VERSION = '0.67'
 
 DEBUG_SERIAL = 0
 DEBUG_RAIN = 0
@@ -878,7 +879,7 @@ class Meteostick(object):
                                       % (temp_raw, temp_f, temp_c))
                         else:
                             # analog sensor (thermistor)
-                            temp_raw /= 4  # 10-bits temp value
+                            temp_raw = temp_raw // 4  # 10-bits temp value
                             temp_c = calculate_thermistor_temp(temp_raw)
                             dbg_parse(3, "thermistor temp_raw=0x%03x temp_c=%s"
                                       % (temp_raw, temp_c))

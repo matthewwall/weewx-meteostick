@@ -1,3 +1,6 @@
+0.67 01jun2020
+* fix integer division
+
 0.66 27may2020
 * compatibility with weewx4
 
