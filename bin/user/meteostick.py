@@ -527,7 +527,7 @@ class Meteostick(object):
             self.serial_port = None
 
     def get_readings(self):
-        buf = self.serial_port.readline().decode('utf-8')
+        buf = self.serial_port.readline().decode('ascii')
         if len(buf) > 0:
             dbg_serial(2, "station said: %s" %
                        ' '.join(["%0.2X" % ord(c) for c in buf]))
@@ -550,11 +550,13 @@ class Meteostick(object):
         """Reset the device, leaving it in a state that we can talk to it."""
         loginf("establish communication with the meteostick")
 
-        # flush any previous data in the input buffer
+        # flush any previous data in the input and output buffer
         self.serial_port.flushInput()
+        self.serial_port.flushOutput()
 
-        # Send a reset command
-        self.serial_port.write(b'r\n')
+        # Send and flush a reset command
+        self.serial_port.write(b'\nr\n')
+        self.serial_port.flush()
         # Wait until we see the ? character
         start_ts = time.time()
         ready = False
@@ -562,7 +564,7 @@ class Meteostick(object):
         while not ready:
             time.sleep(0.1)
             while self.serial_port.inWaiting() > 0:
-                c = self.serial_port.read(1).decode('utf-8')
+                c = self.serial_port.read(1).decode('ascii', 'ignore')
                 if c == '?':
                     ready = True
                 elif c in string.printable:
@@ -610,10 +612,11 @@ class Meteostick(object):
         # From now on the device will produce lines with received data
 
     def send_command(self, cmd):
-        cmd2 = (cmd + "\r").encode('utf-8')
+        cmd2 = (cmd + "\r").encode('ascii')
         self.serial_port.write(cmd2)
+        self.serial_port.flush()
         time.sleep(0.2)
-        response = self.serial_port.read(self.serial_port.inWaiting()).decode('utf-8')
+        response = self.serial_port.read(self.serial_port.inWaiting()).decode('ascii')
         dbg_serial(1, "cmd: '%s': %s" % (cmd, response))
         self.serial_port.flushInput()
 
