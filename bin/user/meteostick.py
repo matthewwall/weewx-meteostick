@@ -305,6 +305,7 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
         return 'Meteostick'
 
     def genLoopPackets(self):
+        start_ts = time.time()
         while True:
             readings = self.station.get_readings_with_retry(self.max_tries,
                                                             self.retry_wait)
@@ -313,11 +314,20 @@ class MeteostickDriver(weewx.drivers.AbstractDevice, weewx.engine.StdService):
                 self._update_rf_stats(data['channel'], data['rf_signal'],
                                       data['rf_missed'])
             if data:
+                start_ts = time.time()
                 dbg_parse(2, "data: %s" % data)
                 packet = self._data_to_packet(data)
                 if packet is not None:
                     dbg_parse(3, "packet: %s" % packet)
                     yield packet
+            if time.time() - start_ts > 60: #seconds
+                # no data received => an error has probably occurred => restart ...
+                loginf('ERROR: serial port receive timeout -> restarting serial port')
+                start_ts = time.time()
+                self.station.close()
+                self.station.open()
+                self.station.reset()
+                self.station.configure()
 
     def _data_to_packet(self, data):
         packet = dict()
